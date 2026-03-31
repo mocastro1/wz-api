@@ -1,0 +1,15 @@
+services:
+  wz-api:
+    build: .
+    container_name: wz-api
+    restart: unless-stopped
+    ports:
+      - "${PORT:-3000}:3000"
+    environment:
+      - NODE_ENV=production
+      - API_BEARER_TOKEN=${API_BEARER_TOKEN}
+      - SF_CLIENT_ID=${SF_CLIENT_ID}
+      - SF_LOGIN_URL=${SF_LOGIN_URL:-https://test.salesforce.com}
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-}
+    env_file:
+      - .env
