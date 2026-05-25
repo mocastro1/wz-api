@@ -85,7 +85,7 @@ export async function POST(req: NextRequest) {
 
     log.info(`Desqualificando ${sobjectName}`, { id: safeId, motivo: data.motivoDePerda });
 
-    const result = await conn.sobject(sobjectName).update(updatePayload) as unknown as {
+    const result = await conn.sobject(sobjectName).update(updatePayload as never) as unknown as {
       success: boolean;
       id: string;
       errors: unknown[];

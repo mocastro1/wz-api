@@ -3,7 +3,7 @@
 // ============================================================
 
 import { NextRequest } from 'next/server';
-import { createConnection, phoneSearchPattern, sanitizeSfId } from '@/lib/salesforce';
+import { createConnection, phoneSearchPattern } from '@/lib/salesforce';
 import { lookupSchema } from '@/lib/schemas';
 import { createRouteLogger } from '@/lib/logger';
 import {
@@ -44,7 +44,10 @@ export async function POST(req: NextRequest) {
   try {
     const conn = createConnection(creds.accessToken, creds.instanceUrl);
 
-    // Busca Lead por telefone (últimos 11 dígitos) em múltiplos campos
+    // Busca apenas Leads ATIVOS:
+    //   - não convertidos (IsConverted = false)
+    //   - não desqualificados automaticamente (Desqualificado_Automacao__c = false)
+    // Leads inativos não devem aparecer no badge — eles liberam o "Salvar como Lead" novamente.
     const soql = `
       SELECT Id, Name, FirstName, LastName, Phone, MobilePhone,
              beetalk__PhoneOrMobilePhone__c, Status, LeadSource,
@@ -52,86 +55,91 @@ export async function POST(req: NextRequest) {
              IsConverted, ConvertedOpportunityId,
              Motivo_de_Perda__c
       FROM Lead
-      WHERE Phone LIKE '%${pattern}'
-         OR MobilePhone LIKE '%${pattern}'
-         OR beetalk__PhoneOrMobilePhone__c LIKE '%${pattern}'
+      WHERE (Phone LIKE '%${pattern}'
+          OR MobilePhone LIKE '%${pattern}'
+          OR beetalk__PhoneOrMobilePhone__c LIKE '%${pattern}')
+        AND IsConverted = false
+        AND Desqualificado_Automacao__c = false
       ORDER BY CreatedDate DESC
       LIMIT 5
     `;
 
-    const result = await conn.query(soql);
+    // Em paralelo: busca Oportunidades ATIVAS (não fechadas) pelo telefone do Contact relacionado
+    // Critério da regra de negócio: IsClosed = false (Opp aberta = ativa)
+    const oppSoql = `
+      SELECT Id, Name, StageName, IsClosed,
+             COTACAO_FATURADA__C, MOTIVO_DE_PERDA__C,
+             Amount, CloseDate, OwnerId, Owner.Name,
+             AccountId, ContactId,
+             Account.PersonMobilePhone, Account.Phone
+      FROM Opportunity
+      WHERE IsClosed = false
+        AND (Account.PersonMobilePhone LIKE '%${pattern}'
+          OR Account.Phone LIKE '%${pattern}')
+      ORDER BY CreatedDate DESC
+      LIMIT 5
+    `;
 
-    if (!result.records || result.records.length === 0) {
+    const leadResult = await conn.query(soql);
+    let oppRecords: Record<string, unknown>[] = [];
+    try {
+      const oppResult = await conn.query(oppSoql);
+      oppRecords = (oppResult.records as Record<string, unknown>[]) || [];
+    } catch (_) {
+      // Org pode não ter Account.PersonMobilePhone se não usa Person Accounts
+      oppRecords = [];
+    }
+
+    const leadRecords = leadResult.records || [];
+
+    if (leadRecords.length === 0 && oppRecords.length === 0) {
       return jsonOk({ found: false, leads: [] });
     }
 
-    // Para leads convertidos, busca dados da Oportunidade
-    const leads = await Promise.all(result.records.map(async (r: Record<string, unknown>) => {
-      const lead: Record<string, unknown> = {
-        leadId:        r.Id,
-        leadName:      r.Name,
-        firstName:     r.FirstName,
-        lastName:      r.LastName,
-        phone:         r.Phone,
-        mobilePhone:   r.MobilePhone,
-        leadStatus:    r.Status,
-        leadSource:    r.LeadSource,
-        company:       r.Company,
-        ownerId:       r.OwnerId,
-        ownerName:     (r.Owner as Record<string, unknown>)?.Name || '',
-        leadUrl:       `${creds.instanceUrl}/lightning/r/Lead/${r.Id}/view`,
-        isConverted:   r.IsConverted || false,
-        opportunityId: r.ConvertedOpportunityId || null,
-        motivoPerda:   r.Motivo_de_Perda__c || null,
-        encerrado:     !!r.Motivo_de_Perda__c,
-        opportunity:   null as Record<string, unknown> | null,
-      };
-
-      // Se o lead foi convertido, busca a Oportunidade
-      if (r.ConvertedOpportunityId) {
-        const safeOppId = sanitizeSfId(r.ConvertedOpportunityId);
-        if (safeOppId) {
-        try {
-          const oppResult = await conn.query(`
-            SELECT Id, Name, StageName,
-                   COTACAO_FATURADA__C, MOTIVO_DE_PERDA__C,
-                   Amount, CloseDate, OwnerId, Owner.Name
-            FROM Opportunity
-            WHERE Id = '${safeOppId}'
-            LIMIT 1
-          `);
-          if (oppResult.records?.length > 0) {
-            const opp = oppResult.records[0] as Record<string, unknown>;
-            lead.opportunity = {
-              oppId:           opp.Id,
-              oppName:         opp.Name,
-              stageName:       opp.StageName,
-              cotacaoFaturada: opp.COTACAO_FATURADA__C || false,
-              motivoPerda:     opp.MOTIVO_DE_PERDA__C || null,
-              amount:          opp.Amount,
-              closeDate:       opp.CloseDate,
-              ownerId:         opp.OwnerId,
-              ownerName:       (opp.Owner as Record<string, unknown>)?.Name || '',
-              oppUrl:          `${creds.instanceUrl}/lightning/r/Opportunity/${opp.Id}/view`,
-            };
-            // Lead encerrado se: oportunidade faturada OU motivo de perda na opp OU motivo de perda no lead
-            const opp2 = lead.opportunity as Record<string, unknown>;
-            lead.encerrado = !!(opp2.cotacaoFaturada || opp2.motivoPerda || lead.motivoPerda);
-          }
-        } catch (_) {
-          // Silencia erro de permissão na Oportunidade
-        }
-        } // end if safeOppId
-      }
-
-      return lead;
+    // Mapeia Oportunidades ativas para um array
+    const opportunities = oppRecords.map((o: Record<string, unknown>) => ({
+      oppId:           o.Id,
+      oppName:         o.Name,
+      stageName:       o.StageName,
+      isClosed:        o.IsClosed || false,
+      cotacaoFaturada: o.COTACAO_FATURADA__C || false,
+      motivoPerda:     o.MOTIVO_DE_PERDA__C || null,
+      amount:          o.Amount,
+      closeDate:       o.CloseDate,
+      ownerId:         o.OwnerId,
+      ownerName:       (o.Owner as Record<string, unknown>)?.Name || '',
+      oppUrl:          `${creds.instanceUrl}/lightning/r/Opportunity/${o.Id}/view`,
     }));
 
-    log.done(`${leads.length} lead(s) encontrado(s)`, { count: leads.length, ids: leads.map(l => l.leadId) });
+    const leads = leadRecords.map((r: Record<string, unknown>) => ({
+      leadId:        r.Id,
+      leadName:      r.Name,
+      firstName:     r.FirstName,
+      lastName:      r.LastName,
+      phone:         r.Phone,
+      mobilePhone:   r.MobilePhone,
+      leadStatus:    r.Status,
+      leadSource:    r.LeadSource,
+      company:       r.Company,
+      ownerId:       r.OwnerId,
+      ownerName:     (r.Owner as Record<string, unknown>)?.Name || '',
+      leadUrl:       `${creds.instanceUrl}/lightning/r/Lead/${r.Id}/view`,
+      isConverted:   r.IsConverted || false,
+      motivoPerda:   r.Motivo_de_Perda__c || null,
+      encerrado:     false,
+      // Anexa a primeira Oportunidade ativa encontrada (compat com o front antigo)
+      opportunity:   opportunities[0] || null,
+    }));
+
+    log.done(`Lookup retornou`, {
+      activeLeads: leads.length,
+      activeOpps:  opportunities.length,
+    });
     return jsonOk({
       found: true,
       count: leads.length,
       leads,
+      opportunities,
     });
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : 'Erro desconhecido';
