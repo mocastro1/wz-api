@@ -3,7 +3,7 @@
 // ============================================================
 
 import { NextRequest } from 'next/server';
-import { createConnection, normalizePhone, phoneSearchPattern } from '@/lib/salesforce';
+import { createConnection, normalizePhone, phoneSearchPattern, sanitizeSoqlString } from '@/lib/salesforce';
 import { conversationSchema } from '@/lib/schemas';
 import {
   handleOptions, extractSfCredentials, extractSfCredentialsFromBody,
@@ -39,7 +39,7 @@ export async function POST(req: NextRequest) {
     // Se leadId já veio no body, usa direto; senão busca pelo telefone
     let whoId = data.leadId;
     if (!whoId) {
-      const pattern = phoneSearchPattern(data.phone);
+      const pattern = sanitizeSoqlString(phoneSearchPattern(data.phone));
       const result = await conn.query(
         `SELECT Id FROM Lead WHERE Phone LIKE '%${pattern}' OR MobilePhone LIKE '%${pattern}' OR beetalk__PhoneOrMobilePhone__c LIKE '%${pattern}' LIMIT 1`
       );

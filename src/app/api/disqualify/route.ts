@@ -1,7 +1,5 @@
 // ============================================================
 // POST /api/disqualify — Desqualificar Lead ou Oportunidade
-// GET  /api/disqualify/picklist?object=Lead|Opportunity
-//      Retorna valores do campo Motivo_de_Perda__c via describe
 // ============================================================
 
 import { NextRequest } from 'next/server';
@@ -20,16 +18,59 @@ export async function OPTIONS() {
 // ─── Schema de validação ──────────────────────────────────────
 const disqualifySchema = z.discriminatedUnion('objectType', [
   z.object({
-    objectType:       z.literal('Lead'),
-    recordId:         z.string().min(15).max(18),
-    motivoDePerda:    z.string().min(1, 'Motivo de perda é obrigatório'),
+    objectType:    z.literal('Lead'),
+    recordId:      z.string().min(15).max(18),
+    motivoDePerda: z.string().min(1, 'Motivo de perda é obrigatório'),
   }),
   z.object({
-    objectType:       z.literal('Opportunity'),
-    recordId:         z.string().min(15).max(18),
-    motivoDePerda:    z.string().min(1, 'Motivo de perda é obrigatório'),
+    objectType:    z.literal('Opportunity'),
+    recordId:      z.string().min(15).max(18),
+    motivoDePerda: z.string().min(1, 'Motivo de perda é obrigatório'),
   }),
 ]);
+
+// ─── Helpers ─────────────────────────────────────────────────
+
+/** Retorna valores ATIVOS do Motivo_de_Perda__c válidos para a origem.
+ *  Mesma lógica do endpoint /picklist:
+ *  - describe() → activeSet (fonte de verdade)
+ *  - GROUP BY por LeadSource → interseciona com activeSet
+ *  - Fallback: todos os ativos */
+async function getValidMotivos(
+  conn: ReturnType<typeof createConnection>,
+  objectName: string,
+  leadSource: string | null,
+): Promise<{ valid: string[]; inactive: string[] }> {
+  const meta        = await conn.describe(objectName);
+  const motivoField = meta.fields.find((f) => f.name === 'Motivo_de_Perda__c');
+  const all         = motivoField?.picklistValues || [];
+  const activeSet   = new Set(all.filter((v) => v.active).map((v) => v.value));
+  const inactive    = all.filter((v) => !v.active).map((v) => v.value);
+
+  if (leadSource) {
+    try {
+      const safeSource = leadSource.replace(/'/g, "\\'");
+      const r = await conn.query<Record<string, string>>(`
+        SELECT Motivo_de_Perda__c
+        FROM ${objectName}
+        WHERE LeadSource = '${safeSource}'
+          AND Motivo_de_Perda__c != null
+        GROUP BY Motivo_de_Perda__c
+        ORDER BY COUNT(Id) DESC
+      `);
+
+      const used = (r.records || [])
+        .map((rec) => rec['Motivo_de_Perda__c'])
+        .filter((v) => activeSet.has(v));
+
+      if (used.length > 0) {
+        return { valid: used, inactive };
+      }
+    } catch (_) { /* fallback */ }
+  }
+
+  return { valid: [...activeSet], inactive };
+}
 
 // ─── POST — Executa a desqualificação ────────────────────────
 export async function POST(req: NextRequest) {
@@ -55,7 +96,6 @@ export async function POST(req: NextRequest) {
     return jsonError('Credenciais Salesforce ausentes', 401);
   }
 
-  // Sanitiza ID para evitar SOQL injection
   const safeId = sanitizeSfId(data.recordId);
   if (!safeId) {
     return jsonError('recordId inválido', 422);
@@ -63,28 +103,85 @@ export async function POST(req: NextRequest) {
 
   try {
     const conn = createConnection(creds.accessToken, creds.instanceUrl);
+    const sobjectName = data.objectType; // 'Lead' | 'Opportunity'
 
-    let updatePayload: Record<string, string>;
-    let sobjectName: string;
+    // ── 1. Busca o registro atual (LeadSource + estado) ────────
+    let leadSource: string | null = null;
+    try {
+      const fields = sobjectName === 'Lead'
+        ? 'Id, Status, LeadSource, Motivo_de_Perda__c, Desqualificado_Automacao__c'
+        : 'Id, StageName, LeadSource, Motivo_de_Perda__c';
 
-    if (data.objectType === 'Lead') {
-      sobjectName = 'Lead';
+      const r = await conn.query<Record<string, unknown>>(
+        `SELECT ${fields} FROM ${sobjectName} WHERE Id = '${safeId}' LIMIT 1`
+      );
+      const rec = r.records?.[0];
+      leadSource = (rec?.LeadSource as string) ?? null;
+      log.info('Registro atual', { sobjectName, id: safeId, leadSource, rec });
+    } catch (e) {
+      log.warn('Não foi possível buscar registro antes do update', {
+        error: e instanceof Error ? e.message : String(e),
+      });
+    }
+
+    // ── 2. Valida motivoDePerda contra active + dependência ────
+    try {
+      const { valid, inactive } = await getValidMotivos(conn, sobjectName, leadSource);
+
+      log.info(`Validando motivoDePerda`, {
+        sobjectName,
+        leadSource,
+        validCount:   valid.length,
+        inactiveCount: inactive.length,
+        inactiveValues: inactive,
+        recebido:     data.motivoDePerda,
+        isInactive:   inactive.includes(data.motivoDePerda),
+        isValid:      valid.includes(data.motivoDePerda),
+      });
+
+      if (inactive.includes(data.motivoDePerda)) {
+        return jsonError(
+          `Motivo "${data.motivoDePerda}" está INATIVO em ${sobjectName}. ` +
+          `Valores ativos: ${valid.join(', ')}`,
+          422
+        );
+      }
+
+      if (valid.length > 0 && !valid.includes(data.motivoDePerda)) {
+        return jsonError(
+          `Motivo "${data.motivoDePerda}" não é válido para ${sobjectName}` +
+          (leadSource ? ` (origem: ${leadSource})` : '') +
+          `. Valores válidos: ${valid.join(', ')}`,
+          422
+        );
+      }
+    } catch (validateErr) {
+      log.warn('Não foi possível validar picklist — prosseguindo sem validação', {
+        error: validateErr instanceof Error ? validateErr.message : String(validateErr),
+      });
+    }
+
+    // ── 3. Monta payload do update ─────────────────────────────
+    let updatePayload: Record<string, unknown>;
+
+    if (sobjectName === 'Lead') {
       updatePayload = {
-        Id:                safeId,
-        Status:            'Não qualificado',
-        Motivo_de_Perda__c: data.motivoDePerda,
+        Id:                          safeId,
+        Status:                      'Não qualificado',
+        Motivo_de_Perda__c:          data.motivoDePerda,
+        Desqualificado_Automacao__c:  true,
       };
     } else {
-      sobjectName = 'Opportunity';
       updatePayload = {
-        Id:                safeId,
-        StageName:         'Negociação perdida',
+        Id:                 safeId,
+        StageName:          'Negociação perdida',
         Motivo_de_Perda__c: data.motivoDePerda,
       };
     }
 
-    log.info(`Desqualificando ${sobjectName}`, { id: safeId, payload: updatePayload });
+    log.info(`Desqualificando ${sobjectName}`, { id: safeId, leadSource, payload: updatePayload });
 
+    // ── 4. Executa o update ────────────────────────────────────
     const result = await conn.sobject(sobjectName).update(updatePayload as never) as unknown as {
       success: boolean;
       id: string;
@@ -98,34 +195,38 @@ export async function POST(req: NextRequest) {
       return jsonError(`Salesforce rejeitou: ${JSON.stringify(result.errors)}`, 400);
     }
 
-    // Re-consulta o registro pra CONFIRMAR que persistiu
-    // (triggers/validation rules podem reverter sem retornar erro)
+    // ── 5. Verifica se o estado persistiu ─────────────────────
     let verification: Record<string, unknown> | null = null;
     let actuallyDisqualified = false;
     try {
-      if (data.objectType === 'Lead') {
-        const r = await conn.query(`SELECT Id, Status, Motivo_de_Perda__c FROM Lead WHERE Id = '${safeId}' LIMIT 1`);
-        verification = r.records?.[0] as Record<string, unknown> || null;
+      if (sobjectName === 'Lead') {
+        const r = await conn.query<Record<string, unknown>>(
+          `SELECT Id, Status, Motivo_de_Perda__c, Desqualificado_Automacao__c FROM Lead WHERE Id = '${safeId}' LIMIT 1`
+        );
+        verification = r.records?.[0] ?? null;
         actuallyDisqualified = verification?.Status === 'Não qualificado'
-                            && !!verification?.Motivo_de_Perda__c;
+                            && !!verification?.Motivo_de_Perda__c
+                            && verification?.Desqualificado_Automacao__c === true;
       } else {
-        const r = await conn.query(`SELECT Id, StageName, MOTIVO_DE_PERDA__C FROM Opportunity WHERE Id = '${safeId}' LIMIT 1`);
-        verification = r.records?.[0] as Record<string, unknown> || null;
+        const r = await conn.query<Record<string, unknown>>(
+          `SELECT Id, StageName, Motivo_de_Perda__c FROM Opportunity WHERE Id = '${safeId}' LIMIT 1`
+        );
+        verification = r.records?.[0] ?? null;
         actuallyDisqualified = verification?.StageName === 'Negociação perdida'
-                            && !!verification?.MOTIVO_DE_PERDA__C;
+                            && !!verification?.Motivo_de_Perda__c;
       }
     } catch (verifyErr) {
-      log.warn('Não foi possível verificar pós-update', { error: verifyErr instanceof Error ? verifyErr.message : String(verifyErr) });
+      log.warn('Não foi possível verificar pós-update', {
+        error: verifyErr instanceof Error ? verifyErr.message : String(verifyErr),
+      });
     }
 
-    log.done(`${sobjectName} update OK`, { id: safeId, actuallyDisqualified, verification });
+    log.done(`${sobjectName} desqualificado`, { id: safeId, actuallyDisqualified, verification });
 
     if (!actuallyDisqualified && verification) {
-      // SF aceitou o update mas o estado final não está como esperado
-      // (trigger reverteu, ou o MasterLabel do Status/StageName tem nome diferente)
       return jsonError(
         `Update aceito mas registro não ficou desqualificado. Estado atual: ${JSON.stringify(verification)}. ` +
-        `Verifique se o valor "${data.objectType === 'Lead' ? 'Não qualificado' : 'Negociação perdida'}" ` +
+        `Verifique se "${sobjectName === 'Lead' ? 'Não qualificado' : 'Negociação perdida'}" ` +
         `existe exatamente assim no ${sobjectName} (case-sensitive).`,
         409
       );
@@ -133,10 +234,12 @@ export async function POST(req: NextRequest) {
 
     return jsonOk({
       recordId:   safeId,
-      objectType: data.objectType,
+      objectType: sobjectName,
+      leadSource,
       verification,
       message:    `${sobjectName} desqualificado com sucesso`,
     });
+
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : 'Erro desconhecido';
     log.fail('Erro ao desqualificar', { error: msg });

@@ -3,7 +3,7 @@
 // ============================================================
 
 import { NextRequest } from 'next/server';
-import { createConnection, phoneSearchPattern } from '@/lib/salesforce';
+import { createConnection, phoneSearchPattern, sanitizeSoqlString } from '@/lib/salesforce';
 import { lookupSchema } from '@/lib/schemas';
 import { createRouteLogger } from '@/lib/logger';
 import {
@@ -38,7 +38,9 @@ export async function POST(req: NextRequest) {
     return jsonError(`Dados inválidos: ${parsed.error.issues.map(i => i.message).join(', ')}`, 422);
   }
 
-  const pattern = phoneSearchPattern(parsed.data.phone);
+  // phoneSearchPattern já retorna só dígitos (via normalizePhone),
+  // mas sanitizeSoqlString garante defesa em profundidade contra SOQL injection.
+  const pattern = sanitizeSoqlString(phoneSearchPattern(parsed.data.phone));
   log.debug('Pattern SOQL', { pattern, instanceUrl: creds.instanceUrl });
 
   try {
