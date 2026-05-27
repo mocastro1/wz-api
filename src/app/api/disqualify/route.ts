@@ -9,6 +9,7 @@ import {
   handleOptions, extractSfCredentials, extractSfCredentialsFromBody,
   validateApiToken, jsonOk, jsonError,
 } from '@/lib/api-middleware';
+import { getValidMotivosForOrigin } from '@/lib/motivo-perda';
 import { z } from 'zod';
 
 export async function OPTIONS() {
@@ -29,48 +30,9 @@ const disqualifySchema = z.discriminatedUnion('objectType', [
   }),
 ]);
 
-// ─── Helpers ─────────────────────────────────────────────────
-
-/** Retorna valores ATIVOS do Motivo_de_Perda__c válidos para a origem.
- *  Mesma lógica do endpoint /picklist:
- *  - describe() → activeSet (fonte de verdade)
- *  - GROUP BY por LeadSource → interseciona com activeSet
- *  - Fallback: todos os ativos */
-async function getValidMotivos(
-  conn: ReturnType<typeof createConnection>,
-  objectName: string,
-  leadSource: string | null,
-): Promise<{ valid: string[]; inactive: string[] }> {
-  const meta        = await conn.describe(objectName);
-  const motivoField = meta.fields.find((f) => f.name === 'Motivo_de_Perda__c');
-  const all         = motivoField?.picklistValues || [];
-  const activeSet   = new Set(all.filter((v) => v.active).map((v) => v.value));
-  const inactive    = all.filter((v) => !v.active).map((v) => v.value);
-
-  if (leadSource) {
-    try {
-      const safeSource = leadSource.replace(/'/g, "\\'");
-      const r = await conn.query<Record<string, string>>(`
-        SELECT Motivo_de_Perda__c
-        FROM ${objectName}
-        WHERE LeadSource = '${safeSource}'
-          AND Motivo_de_Perda__c != null
-        GROUP BY Motivo_de_Perda__c
-        ORDER BY COUNT(Id) DESC
-      `);
-
-      const used = (r.records || [])
-        .map((rec) => rec['Motivo_de_Perda__c'])
-        .filter((v) => activeSet.has(v));
-
-      if (used.length > 0) {
-        return { valid: used, inactive };
-      }
-    } catch (_) { /* fallback */ }
-  }
-
-  return { valid: [...activeSet], inactive };
-}
+// Validação usa getValidMotivosForOrigin (em ./picklist/route) que decodifica
+// o bitmask ValidFor com a ORDEM correta do PicklistValueInfo — não do describe,
+// cuja ordem difere e gerava motivos inválidos.
 
 // ─── POST — Executa a desqualificação ────────────────────────
 export async function POST(req: NextRequest) {
@@ -105,7 +67,7 @@ export async function POST(req: NextRequest) {
     const conn = createConnection(creds.accessToken, creds.instanceUrl);
     const sobjectName = data.objectType; // 'Lead' | 'Opportunity'
 
-    // ── 1. Busca o registro atual (LeadSource + estado) ────────
+    // ── 1. Busca o registro atual (LeadSource obrigatório) ─────
     let leadSource: string | null = null;
     try {
       const fields = sobjectName === 'Lead'
@@ -116,49 +78,55 @@ export async function POST(req: NextRequest) {
         `SELECT ${fields} FROM ${sobjectName} WHERE Id = '${safeId}' LIMIT 1`
       );
       const rec = r.records?.[0];
-      leadSource = (rec?.LeadSource as string) ?? null;
-      log.info('Registro atual', { sobjectName, id: safeId, leadSource, rec });
+      if (!rec) {
+        return jsonError(`${sobjectName} ${safeId} não encontrado`, 404);
+      }
+      leadSource = (rec.LeadSource as string) ?? null;
+      log.info('Registro atual', { sobjectName, id: safeId, leadSource });
     } catch (e) {
-      log.warn('Não foi possível buscar registro antes do update', {
+      log.fail('Erro ao buscar registro antes do update', {
         error: e instanceof Error ? e.message : String(e),
       });
+      return jsonError('Não foi possível ler o registro no Salesforce. Tente novamente.', 502);
     }
 
-    // ── 2. Valida motivoDePerda contra active + dependência ────
+    if (!leadSource) {
+      return jsonError(
+        `${sobjectName} sem origem (LeadSource) — não é possível validar o motivo de perda.`,
+        422
+      );
+    }
+
+    // ── 2. Valida motivoDePerda contra a dependência (obrigatório) ──
+    // Se a validação falhar por erro técnico, BLOQUEIA (não deixa passar)
+    // para evitar enviar motivo inválido e causar erro 500 no SF.
+    let valid: string[];
     try {
-      const { valid, inactive } = await getValidMotivos(conn, sobjectName, leadSource);
-
-      log.info(`Validando motivoDePerda`, {
-        sobjectName,
-        leadSource,
-        validCount:   valid.length,
-        inactiveCount: inactive.length,
-        inactiveValues: inactive,
-        recebido:     data.motivoDePerda,
-        isInactive:   inactive.includes(data.motivoDePerda),
-        isValid:      valid.includes(data.motivoDePerda),
-      });
-
-      if (inactive.includes(data.motivoDePerda)) {
-        return jsonError(
-          `Motivo "${data.motivoDePerda}" está INATIVO em ${sobjectName}. ` +
-          `Valores ativos: ${valid.join(', ')}`,
-          422
-        );
-      }
-
-      if (valid.length > 0 && !valid.includes(data.motivoDePerda)) {
-        return jsonError(
-          `Motivo "${data.motivoDePerda}" não é válido para ${sobjectName}` +
-          (leadSource ? ` (origem: ${leadSource})` : '') +
-          `. Valores válidos: ${valid.join(', ')}`,
-          422
-        );
-      }
+      valid = await getValidMotivosForOrigin(conn, sobjectName, leadSource);
     } catch (validateErr) {
-      log.warn('Não foi possível validar picklist — prosseguindo sem validação', {
+      log.fail('Erro ao validar motivo contra picklist dependente', {
         error: validateErr instanceof Error ? validateErr.message : String(validateErr),
       });
+      return jsonError(
+        'Não foi possível validar o motivo de perda contra a configuração do Salesforce. Tente novamente.',
+        502
+      );
+    }
+
+    log.info('Validando motivoDePerda', {
+      sobjectName,
+      leadSource,
+      validCount: valid.length,
+      recebido:   data.motivoDePerda,
+      isValid:    valid.includes(data.motivoDePerda),
+    });
+
+    if (!valid.includes(data.motivoDePerda)) {
+      return jsonError(
+        `Motivo "${data.motivoDePerda}" não é válido para ${sobjectName} com origem "${leadSource}". ` +
+        `Valores válidos: ${valid.join(', ')}`,
+        422
+      );
     }
 
     // ── 3. Monta payload do update ─────────────────────────────

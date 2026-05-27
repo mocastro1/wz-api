@@ -4,7 +4,7 @@
 // ============================================================
 
 import { NextRequest } from 'next/server';
-import { createConnection, normalizePhone } from '@/lib/salesforce';
+import { createConnection, normalizePhone, validateConnection, sanitizeSfId } from '@/lib/salesforce';
 import { leadSchema } from '@/lib/schemas';
 import { createRouteLogger } from '@/lib/logger';
 import {
@@ -46,6 +46,28 @@ export async function POST(req: NextRequest) {
   try {
     const conn = createConnection(creds.accessToken, creds.instanceUrl);
 
+    // Concessionária vem SEMPRE do usuário SF logado (não do que a extensão envia).
+    // Se o User não tiver Apelido_Concessionaria__c configurado, bloqueia.
+    let concessionariaRef = '';
+    try {
+      const identity = await validateConnection(conn);
+      const safeUserId = sanitizeSfId(identity.userId);
+      if (safeUserId) {
+        const r = await conn.query<{ Apelido_Concessionaria__c: string | null }>(
+          `SELECT Apelido_Concessionaria__c FROM User WHERE Id = '${safeUserId}' LIMIT 1`
+        );
+        concessionariaRef = r.records?.[0]?.Apelido_Concessionaria__c?.trim() || '';
+      }
+    } catch (e) {
+      log.fail('Erro ao buscar concessionária do usuário', { error: e instanceof Error ? e.message : String(e) });
+      return jsonError('Não foi possível validar a concessionária do usuário. Tente refazer o login no Salesforce.', 502);
+    }
+
+    if (!concessionariaRef) {
+      log.warn('Usuário sem concessionária configurada — Lead bloqueado');
+      return jsonError('Usuário não possui concessionária configurada. Contate o administrador do sistema.', 422);
+    }
+
     const leadRecord: Record<string, string> = {
       FirstName:  data.FirstName,
       LastName:   data.LastName,
@@ -53,9 +75,9 @@ export async function POST(req: NextRequest) {
       Phone:      normalizePhone(data.Phone),
       Status:     data.Status || 'Novo',
       LeadSource: data.LeadSource,
+      Concessionaria_Ref__c: concessionariaRef,
     };
 
-    if (data.Concessionaria_Ref__c) leadRecord.Concessionaria_Ref__c = data.Concessionaria_Ref__c;
     if (data.Interesse_em__c) leadRecord.Interesse_em__c = data.Interesse_em__c;
     if (data.MobilePhone) leadRecord.MobilePhone = normalizePhone(data.MobilePhone);
     if (data.Description) leadRecord.Description = data.Description;

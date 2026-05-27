@@ -35,26 +35,24 @@ export const contactSchema = z.object({
 });
 
 export const activitySchema = z.object({
-  Subject: z.string().min(1, 'Assunto é obrigatório'),
-  Description: z.string().optional(),
-  WhoId: z.string().optional(),    // Lead/Contact ID
-  WhatId: z.string().optional(),   // Account/Opportunity ID
-  ActivityDate: z.string().optional(),
-  Priority: z.enum(['High', 'Normal', 'Low']).default('Normal'),
-  Status: z.enum(['Not Started', 'In Progress', 'Completed', 'Waiting on someone else', 'Deferred']).default('Not Started'),
-  Type: z.string().default('WhatsApp'),
+  recordId:        z.string().min(15).max(18),
+  recordType:      z.enum(['Lead', 'Opportunity']),
+  participantName: z.string().min(1),
+  reminderDate:    z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Data inválida (YYYY-MM-DD)'),
+  reminderTime:    z.string().regex(/^\d{2}:\d{2}$/, 'Hora inválida (HH:MM)').default('09:00'),
+  description:     z.string().optional(),
 });
 
 export const conversationSchema = z.object({
-  phone: z.string().min(8),
-  contactName: z.string().min(1),
+  recordId:         z.string().min(15).max(18),
+  recordType:       z.enum(['Lead', 'Opportunity']),
+  participantName:  z.string().min(1),
+  conversationDate: z.string().optional(), // YYYY-MM-DD (default: hoje)
   messages: z.array(z.object({
-    from: z.string(),
-    text: z.string(),
-    timestamp: z.string().optional(),
-  })).optional(),
-  summary: z.string().optional(),
-  leadId: z.string().optional(),
+    actor: z.enum(['Vendedor', 'Cliente']),
+    text:  z.string(),
+    time:  z.string().optional(), // HH:MM
+  })).min(1, 'Conversa precisa ter ao menos 1 mensagem'),
 });
 
 export type LeadInput = z.infer<typeof leadSchema>;
