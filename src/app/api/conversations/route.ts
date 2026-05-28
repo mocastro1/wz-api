@@ -17,6 +17,8 @@ import { NextRequest } from 'next/server';
 import { createConnection, sanitizeSfId } from '@/lib/salesforce';
 import { conversationSchema } from '@/lib/schemas';
 import { createRouteLogger } from '@/lib/logger';
+import { withTimeout, SF_TIMEOUT, isSfTimeout } from '@/lib/sf-timeout';
+import { checkRateLimit } from '@/lib/rate-limit-middleware';
 import {
   handleOptions, extractSfCredentials, extractSfCredentialsFromBody,
   validateApiToken, jsonOk, jsonError,
@@ -59,6 +61,9 @@ export async function POST(req: NextRequest) {
     return jsonError('Token inválido', 401);
   }
 
+  const rl = checkRateLimit(req, 'write', 'conversations');
+  if (rl) return rl;
+
   const body = await req.json().catch(() => null);
   if (!body) return jsonError('Body inválido', 400);
 
@@ -95,8 +100,12 @@ export async function POST(req: NextRequest) {
       // Opportunity → WhatId é a própria Opp; busca ContactId pra WhoId se existir
       whatId = safeRecordId;
       try {
-        const r = await conn.query<{ ContactId: string | null }>(
-          `SELECT ContactId FROM Opportunity WHERE Id = '${safeRecordId}' LIMIT 1`
+        const r = await withTimeout(
+          conn.query<{ ContactId: string | null }>(
+            `SELECT ContactId FROM Opportunity WHERE Id = '${safeRecordId}' LIMIT 1`
+          ),
+          SF_TIMEOUT.query,
+          'query Opp ContactId',
         );
         const contactId = r.records?.[0]?.ContactId ?? null;
         if (contactId) {
@@ -135,11 +144,15 @@ export async function POST(req: NextRequest) {
       msgCount:   data.messages.length,
     });
 
-    const result = await conn.sobject('Task').create(taskRecord) as unknown as {
-      success: boolean;
-      id: string;
-      errors: unknown[];
-    };
+    const result = await withTimeout(
+      conn.sobject('Task').create(taskRecord) as Promise<{
+        success: boolean;
+        id: string;
+        errors: unknown[];
+      }>,
+      SF_TIMEOUT.update,
+      'create Task conversa',
+    );
 
     if (!result.success) {
       log.fail('Salesforce rejeitou Task', result.errors);
@@ -158,6 +171,10 @@ export async function POST(req: NextRequest) {
     }, 201);
 
   } catch (e: unknown) {
+    if (isSfTimeout(e)) {
+      log.fail('Timeout no Salesforce', { op: e.op, ms: e.ms });
+      return jsonError('Salesforce demorou demais para responder. Tente novamente.', 504);
+    }
     const msg = e instanceof Error ? e.message : 'Erro desconhecido';
     log.fail('Erro ao registrar conversa', { error: msg });
     return jsonError(`Erro ao registrar conversa: ${msg}`, 500);

@@ -11,6 +11,8 @@ import {
   handleOptions, extractSfCredentials,
   validateApiToken, jsonOk, jsonError,
 } from '@/lib/api-middleware';
+import { checkRateLimit } from '@/lib/rate-limit-middleware';
+import { withTimeout, SF_TIMEOUT, isSfTimeout } from '@/lib/sf-timeout';
 
 export async function OPTIONS() {
   return handleOptions();
@@ -22,6 +24,9 @@ export async function GET(req: NextRequest) {
   if (!validateApiToken(req)) {
     return jsonError('Token inválido', 401);
   }
+
+  const rl = checkRateLimit(req, 'metadata', 'leads-picklist');
+  if (rl) return rl;
 
   const creds = extractSfCredentials(req);
   if (!creds) {
@@ -42,7 +47,7 @@ export async function GET(req: NextRequest) {
 
   try {
     const conn = createConnection(creds.accessToken, creds.instanceUrl);
-    const meta = await conn.describe('Lead');
+    const meta = await withTimeout(conn.describe('Lead'), SF_TIMEOUT.describe, 'describe Lead');
 
     const field = meta.fields.find(
       (f) => f.name.toLowerCase() === fieldName.toLowerCase()
@@ -65,6 +70,10 @@ export async function GET(req: NextRequest) {
     log.done(`Picklist "${fieldName}" carregada`, { count: values.length });
     return jsonOk({ field: fieldName, values });
   } catch (e: unknown) {
+    if (isSfTimeout(e)) {
+      log.fail('Timeout no Salesforce', { op: e.op, ms: e.ms });
+      return jsonError('Salesforce demorou demais para responder.', 504);
+    }
     const msg = e instanceof Error ? e.message : 'Erro desconhecido';
     log.fail('Erro ao buscar picklist', { error: msg });
     return jsonError(`Erro ao buscar picklist: ${msg}`, 500);

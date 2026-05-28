@@ -13,12 +13,12 @@ export default function Home() {
         <li><code>POST /api/leads/lookup</code> — Buscar Lead por telefone</li>
         <li><code>GET  /api/leads/:id</code> — Buscar Lead por ID</li>
         <li><code>PATCH /api/leads/:id</code> — Atualizar Lead</li>
-        <li><code>POST /api/contacts</code> — Criar Contato</li>
-        <li><code>POST /api/activities</code> — Criar Atividade/Task</li>
-        <li><code>POST /api/conversations</code> — Registrar conversa</li>
+        <li><code>POST /api/activities</code> — Criar Lembrete (Task)</li>
+        <li><code>POST /api/conversations</code> — Registrar conversa como Task</li>
+        <li><code>POST /api/disqualify</code> — Desqualificar Lead/Oportunidade</li>
+        <li><code>GET  /api/disqualify/picklist</code> — Motivos de perda por origem</li>
         <li><code>GET  /api/leads/picklist</code> — Picklist values do Lead</li>
         <li><code>GET  /api/auth/check</code> — Verificar autenticação SF</li>
-        <li><code>POST /api/auth/[...nextauth]</code> — NextAuth Salesforce OAuth</li>
       </ul>
     </main>
   );

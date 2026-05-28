@@ -10,6 +10,7 @@ import {
   handleOptions, extractSfCredentials,
   validateApiToken, jsonOk, jsonError,
 } from '@/lib/api-middleware';
+import { checkRateLimit } from '@/lib/rate-limit-middleware';
 
 export async function OPTIONS() {
   return handleOptions();
@@ -22,6 +23,9 @@ export async function GET(
   if (!validateApiToken(req)) {
     return jsonError('Token inválido', 401);
   }
+
+  const rl = checkRateLimit(req, 'metadata', 'leads-id');
+  if (rl) return rl;
 
   const creds = extractSfCredentials(req);
   if (!creds) {
@@ -46,6 +50,9 @@ export async function PATCH(
   if (!validateApiToken(req)) {
     return jsonError('Token inválido', 401);
   }
+
+  const rl = checkRateLimit(req, 'metadata', 'leads-id');
+  if (rl) return rl;
 
   const creds = extractSfCredentials(req);
   if (!creds) {

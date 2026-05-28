@@ -2,20 +2,15 @@
 // GET /api/disqualify/picklist?object=Lead|Opportunity&recordId=...
 //
 // Motivo_de_Perda__c é picklist DEPENDENTE de LeadSource (Lead e Opp).
-// A dependência está no bitmask `ValidFor` (Base64) de cada valor.
-//
-// IMPORTANTE: o índice do bit corresponde à ORDEM do PicklistValueInfo
-// (campo controlador), que NÃO é a mesma ordem do describe(). Por isso
-// usamos PicklistValueInfo (SOQL) como fonte tanto da ordem das origens
-// quanto dos motivos + ValidFor.
-//
-// REGRA: apenas IsActive == true (valores inativos causam erro 500 no SF)
+// Resolvido pela UI API via lib/motivo-perda.ts — só ativos, ordem correta.
 // ============================================================
 
 import { NextRequest } from 'next/server';
 import { createConnection, sanitizeSfId } from '@/lib/salesforce';
 import { createRouteLogger } from '@/lib/logger';
 import { getValidMotivosForOrigin } from '@/lib/motivo-perda';
+import { isSfTimeout } from '@/lib/sf-timeout';
+import { checkRateLimit } from '@/lib/rate-limit-middleware';
 import {
   handleOptions, extractSfCredentials,
   validateApiToken, jsonOk, jsonError,
@@ -31,6 +26,9 @@ export async function GET(req: NextRequest) {
   if (!validateApiToken(req)) {
     return jsonError('Token inválido', 401);
   }
+
+  const rl = checkRateLimit(req, 'metadata', 'disqualify-picklist');
+  if (rl) return rl;
 
   const creds = extractSfCredentials(req);
   if (!creds) {
@@ -81,11 +79,15 @@ export async function GET(req: NextRequest) {
       object:     objectName,
       field:      'Motivo_de_Perda__c',
       leadSource,
-      values:     valid.map((v) => ({ value: v, label: v })),
+      values:     valid, // já é { value, label }
       source:     'ui-api-controllerValues',
     });
 
   } catch (e: unknown) {
+    if (isSfTimeout(e)) {
+      log.fail('Timeout no Salesforce', { op: e.op, ms: e.ms });
+      return jsonError('Salesforce demorou demais para responder. Tente novamente.', 504);
+    }
     const msg = e instanceof Error ? e.message : 'Erro desconhecido';
     log.fail('Erro ao buscar picklist de desqualificação', { error: msg });
     return jsonError(`Erro: ${msg}`, 500);

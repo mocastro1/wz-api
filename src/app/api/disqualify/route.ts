@@ -10,6 +10,8 @@ import {
   validateApiToken, jsonOk, jsonError,
 } from '@/lib/api-middleware';
 import { getValidMotivosForOrigin } from '@/lib/motivo-perda';
+import { withTimeout, SF_TIMEOUT, isSfTimeout } from '@/lib/sf-timeout';
+import { checkRateLimit } from '@/lib/rate-limit-middleware';
 import { z } from 'zod';
 
 export async function OPTIONS() {
@@ -41,6 +43,9 @@ export async function POST(req: NextRequest) {
   if (!validateApiToken(req)) {
     return jsonError('Token inválido', 401);
   }
+
+  const rl = checkRateLimit(req, 'write', 'disqualify');
+  if (rl) return rl;
 
   const body = await req.json().catch(() => null);
   if (!body) return jsonError('Body inválido', 400);
@@ -74,8 +79,12 @@ export async function POST(req: NextRequest) {
         ? 'Id, Status, LeadSource, Motivo_de_Perda__c, Desqualificado_Automacao__c'
         : 'Id, StageName, LeadSource, Motivo_de_Perda__c';
 
-      const r = await conn.query<Record<string, unknown>>(
-        `SELECT ${fields} FROM ${sobjectName} WHERE Id = '${safeId}' LIMIT 1`
+      const r = await withTimeout(
+        conn.query<Record<string, unknown>>(
+          `SELECT ${fields} FROM ${sobjectName} WHERE Id = '${safeId}' LIMIT 1`
+        ),
+        SF_TIMEOUT.query,
+        `query ${sobjectName} pre-update`,
       );
       const rec = r.records?.[0];
       if (!rec) {
@@ -84,6 +93,10 @@ export async function POST(req: NextRequest) {
       leadSource = (rec.LeadSource as string) ?? null;
       log.info('Registro atual', { sobjectName, id: safeId, leadSource });
     } catch (e) {
+      if (isSfTimeout(e)) {
+        log.fail('Timeout ao buscar registro', { op: e.op, ms: e.ms });
+        return jsonError('Salesforce demorou demais para responder. Tente novamente.', 504);
+      }
       log.fail('Erro ao buscar registro antes do update', {
         error: e instanceof Error ? e.message : String(e),
       });
@@ -100,9 +113,10 @@ export async function POST(req: NextRequest) {
     // ── 2. Valida motivoDePerda contra a dependência (obrigatório) ──
     // Se a validação falhar por erro técnico, BLOQUEIA (não deixa passar)
     // para evitar enviar motivo inválido e causar erro 500 no SF.
-    let valid: string[];
+    let validValues: string[];
     try {
-      valid = await getValidMotivosForOrigin(conn, sobjectName, leadSource);
+      const valid = await getValidMotivosForOrigin(conn, sobjectName, leadSource);
+      validValues = valid.map((v) => v.value);
     } catch (validateErr) {
       log.fail('Erro ao validar motivo contra picklist dependente', {
         error: validateErr instanceof Error ? validateErr.message : String(validateErr),
@@ -116,15 +130,15 @@ export async function POST(req: NextRequest) {
     log.info('Validando motivoDePerda', {
       sobjectName,
       leadSource,
-      validCount: valid.length,
+      validCount: validValues.length,
       recebido:   data.motivoDePerda,
-      isValid:    valid.includes(data.motivoDePerda),
+      isValid:    validValues.includes(data.motivoDePerda),
     });
 
-    if (!valid.includes(data.motivoDePerda)) {
+    if (!validValues.includes(data.motivoDePerda)) {
       return jsonError(
         `Motivo "${data.motivoDePerda}" não é válido para ${sobjectName} com origem "${leadSource}". ` +
-        `Valores válidos: ${valid.join(', ')}`,
+        `Valores válidos: ${validValues.join(', ')}`,
         422
       );
     }
@@ -150,11 +164,15 @@ export async function POST(req: NextRequest) {
     log.info(`Desqualificando ${sobjectName}`, { id: safeId, leadSource, payload: updatePayload });
 
     // ── 4. Executa o update ────────────────────────────────────
-    const result = await conn.sobject(sobjectName).update(updatePayload as never) as unknown as {
-      success: boolean;
-      id: string;
-      errors: unknown[];
-    };
+    const result = await withTimeout(
+      conn.sobject(sobjectName).update(updatePayload as never) as unknown as Promise<{
+        success: boolean;
+        id: string;
+        errors: unknown[];
+      }>,
+      SF_TIMEOUT.update,
+      `update ${sobjectName}`,
+    );
 
     log.info('Resposta SF update', { success: result.success, errors: result.errors });
 
@@ -209,6 +227,10 @@ export async function POST(req: NextRequest) {
     });
 
   } catch (e: unknown) {
+    if (isSfTimeout(e)) {
+      log.fail('Timeout no Salesforce', { op: e.op, ms: e.ms });
+      return jsonError('Salesforce demorou demais para responder. Tente novamente.', 504);
+    }
     const msg = e instanceof Error ? e.message : 'Erro desconhecido';
     log.fail('Erro ao desqualificar', { error: msg });
     return jsonError(`Erro ao desqualificar: ${msg}`, 500);

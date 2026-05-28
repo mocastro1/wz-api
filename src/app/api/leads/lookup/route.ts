@@ -6,6 +6,8 @@ import { NextRequest } from 'next/server';
 import { createConnection, phoneSearchPattern, sanitizeSoqlString } from '@/lib/salesforce';
 import { lookupSchema } from '@/lib/schemas';
 import { createRouteLogger } from '@/lib/logger';
+import { withTimeout, SF_TIMEOUT, isSfTimeout } from '@/lib/sf-timeout';
+import { checkRateLimit } from '@/lib/rate-limit-middleware';
 import {
   handleOptions, extractSfCredentials, extractSfCredentialsFromBody,
   validateApiToken, jsonOk, jsonError,
@@ -22,6 +24,9 @@ export async function POST(req: NextRequest) {
     log.warn('Token inválido rejeitado');
     return jsonError('Token inválido', 401);
   }
+
+  const rl = checkRateLimit(req, 'lookup', 'lookup');
+  if (rl) return rl;
 
   const body = await req.json();
   log.info('Buscando lead', { phone: body.phone });
@@ -82,12 +87,13 @@ export async function POST(req: NextRequest) {
       LIMIT 5
     `;
 
-    const leadResult = await conn.query(soql);
+    const leadResult = await withTimeout(conn.query(soql), SF_TIMEOUT.query, 'lookup lead');
     let oppRecords: Record<string, unknown>[] = [];
     try {
-      const oppResult = await conn.query(oppSoql);
+      const oppResult = await withTimeout(conn.query(oppSoql), SF_TIMEOUT.query, 'lookup opp');
       oppRecords = (oppResult.records as Record<string, unknown>[]) || [];
-    } catch (_) {
+    } catch (e) {
+      if (isSfTimeout(e)) throw e; // timeout deve propagar (não silenciar)
       // Org pode não ter Account.PersonMobilePhone se não usa Person Accounts
       oppRecords = [];
     }
@@ -144,6 +150,10 @@ export async function POST(req: NextRequest) {
       opportunities,
     });
   } catch (e: unknown) {
+    if (isSfTimeout(e)) {
+      log.fail('Timeout no Salesforce', { op: e.op, ms: e.ms });
+      return jsonError('Salesforce demorou demais para responder. Tente novamente.', 504);
+    }
     const msg = e instanceof Error ? e.message : 'Erro desconhecido';
     log.fail('Erro na busca SOQL', { error: msg });
     return jsonError(`Erro na busca: ${msg}`, 500);

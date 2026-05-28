@@ -7,6 +7,8 @@ import { NextRequest } from 'next/server';
 import { createConnection, normalizePhone, validateConnection, sanitizeSfId } from '@/lib/salesforce';
 import { leadSchema } from '@/lib/schemas';
 import { createRouteLogger } from '@/lib/logger';
+import { withTimeout, SF_TIMEOUT, isSfTimeout } from '@/lib/sf-timeout';
+import { checkRateLimit } from '@/lib/rate-limit-middleware';
 import {
   handleOptions, extractSfCredentials, extractSfCredentialsFromBody,
   validateApiToken, jsonOk, jsonError,
@@ -23,6 +25,9 @@ export async function POST(req: NextRequest) {
     log.warn('Token inválido rejeitado');
     return jsonError('Token inválido', 401);
   }
+
+  const rl = checkRateLimit(req, 'write', 'leads');
+  if (rl) return rl;
 
   const body = await req.json();
   log.info('Criando Lead', { name: `${body.FirstName} ${body.LastName}`, phone: body.Phone });
@@ -50,11 +55,15 @@ export async function POST(req: NextRequest) {
     // Se o User não tiver Apelido_Concessionaria__c configurado, bloqueia.
     let concessionariaRef = '';
     try {
-      const identity = await validateConnection(conn);
+      const identity = await withTimeout(validateConnection(conn), SF_TIMEOUT.query, 'identity');
       const safeUserId = sanitizeSfId(identity.userId);
       if (safeUserId) {
-        const r = await conn.query<{ Apelido_Concessionaria__c: string | null }>(
-          `SELECT Apelido_Concessionaria__c FROM User WHERE Id = '${safeUserId}' LIMIT 1`
+        const r = await withTimeout(
+          conn.query<{ Apelido_Concessionaria__c: string | null }>(
+            `SELECT Apelido_Concessionaria__c FROM User WHERE Id = '${safeUserId}' LIMIT 1`
+          ),
+          SF_TIMEOUT.query,
+          'query User',
         );
         concessionariaRef = r.records?.[0]?.Apelido_Concessionaria__c?.trim() || '';
       }
@@ -85,7 +94,11 @@ export async function POST(req: NextRequest) {
 
     log.info('Lead record para SF', leadRecord);
 
-    const result = await conn.sobject('Lead').create(leadRecord) as unknown as { success: boolean; id: string; errors: unknown[] };
+    const result = await withTimeout(
+      conn.sobject('Lead').create(leadRecord) as Promise<{ success: boolean; id: string; errors: unknown[] }>,
+      SF_TIMEOUT.update,
+      'create Lead',
+    );
 
     if (!result.success) {
       log.fail('Salesforce rejeitou Lead', result.errors);
@@ -98,6 +111,10 @@ export async function POST(req: NextRequest) {
       message: 'Lead criado com sucesso',
     }, 201);
   } catch (e: unknown) {
+    if (isSfTimeout(e)) {
+      log.fail('Timeout no Salesforce', { op: e.op, ms: e.ms });
+      return jsonError('Salesforce demorou demais para responder. Tente novamente.', 504);
+    }
     const msg = e instanceof Error ? e.message : 'Erro desconhecido';
     log.fail('Erro ao criar Lead', { error: msg });
     return jsonError(`Erro ao criar Lead: ${msg}`, 500);

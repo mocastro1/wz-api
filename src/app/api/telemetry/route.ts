@@ -14,6 +14,7 @@ import {
   validateApiToken,
 } from '@/lib/api-middleware';
 import { createRouteLogger, getLogs } from '@/lib/logger';
+import { checkRateLimit } from '@/lib/rate-limit-middleware';
 
 const ROUTE = 'POST /api/telemetry';
 
@@ -48,6 +49,9 @@ export async function POST(req: NextRequest) {
     log.warn('Token inválido');
     return jsonError('Não autorizado', 401, req);
   }
+
+  const rl = checkRateLimit(req, 'telemetry', 'telemetry');
+  if (rl) return rl;
 
   let body: unknown;
   try {

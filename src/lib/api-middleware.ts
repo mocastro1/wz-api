@@ -77,6 +77,17 @@ export function jsonOk(data: unknown, status = 200, req?: NextRequest) {
   return NextResponse.json({ ok: true, ...data as object }, { status, headers: corsHeaders(req) });
 }
 
-export function jsonError(error: string, status = 400, req?: NextRequest) {
-  return NextResponse.json({ ok: false, error }, { status, headers: corsHeaders(req) });
+export function jsonError(
+  error: string,
+  status = 400,
+  reqOrHeaders?: NextRequest | Record<string, string>,
+) {
+  // 3º arg pode ser NextRequest (para CORS) OU headers extras (ex: Retry-After)
+  let headers: Record<string, string>;
+  if (reqOrHeaders && typeof (reqOrHeaders as NextRequest).headers?.get === 'function') {
+    headers = corsHeaders(reqOrHeaders as NextRequest);
+  } else {
+    headers = { ...corsHeaders(), ...(reqOrHeaders as Record<string, string> || {}) };
+  }
+  return NextResponse.json({ ok: false, error }, { status, headers });
 }

@@ -16,6 +16,8 @@ import { NextRequest } from 'next/server';
 import { createConnection, sanitizeSfId } from '@/lib/salesforce';
 import { activitySchema } from '@/lib/schemas';
 import { createRouteLogger } from '@/lib/logger';
+import { withTimeout, SF_TIMEOUT, isSfTimeout } from '@/lib/sf-timeout';
+import { checkRateLimit } from '@/lib/rate-limit-middleware';
 import {
   handleOptions, extractSfCredentials, extractSfCredentialsFromBody,
   validateApiToken, jsonOk, jsonError,
@@ -31,6 +33,9 @@ export async function POST(req: NextRequest) {
   if (!validateApiToken(req)) {
     return jsonError('Token inválido', 401);
   }
+
+  const rl = checkRateLimit(req, 'write', 'activities');
+  if (rl) return rl;
 
   const body = await req.json().catch(() => null);
   if (!body) return jsonError('Body inválido', 400);
@@ -65,8 +70,12 @@ export async function POST(req: NextRequest) {
     } else {
       whatId = safeRecordId;
       try {
-        const r = await conn.query<{ ContactId: string | null }>(
-          `SELECT ContactId FROM Opportunity WHERE Id = '${safeRecordId}' LIMIT 1`
+        const r = await withTimeout(
+          conn.query<{ ContactId: string | null }>(
+            `SELECT ContactId FROM Opportunity WHERE Id = '${safeRecordId}' LIMIT 1`
+          ),
+          SF_TIMEOUT.query,
+          'query Opp ContactId',
         );
         const contactId = r.records?.[0]?.ContactId ?? null;
         if (contactId) whoId = contactId;
@@ -101,11 +110,15 @@ export async function POST(req: NextRequest) {
       reminderDateTime,
     });
 
-    const result = await conn.sobject('Task').create(taskRecord) as unknown as {
-      success: boolean;
-      id: string;
-      errors: unknown[];
-    };
+    const result = await withTimeout(
+      conn.sobject('Task').create(taskRecord) as Promise<{
+        success: boolean;
+        id: string;
+        errors: unknown[];
+      }>,
+      SF_TIMEOUT.update,
+      'create Task lembrete',
+    );
 
     if (!result.success) {
       log.fail('Salesforce rejeitou Task de lembrete', result.errors);
@@ -123,6 +136,10 @@ export async function POST(req: NextRequest) {
     }, 201);
 
   } catch (e: unknown) {
+    if (isSfTimeout(e)) {
+      log.fail('Timeout no Salesforce', { op: e.op, ms: e.ms });
+      return jsonError('Salesforce demorou demais para responder. Tente novamente.', 504);
+    }
     const msg = e instanceof Error ? e.message : 'Erro desconhecido';
     log.fail('Erro ao criar lembrete', { error: msg });
     return jsonError(`Erro ao criar lembrete: ${msg}`, 500);

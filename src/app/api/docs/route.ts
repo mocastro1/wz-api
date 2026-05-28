@@ -145,19 +145,6 @@ const spec = {
           },
         },
       },
-      ContactInput: {
-        type: 'object',
-        required: ['FirstName', 'LastName', 'Phone'],
-        properties: {
-          FirstName: { type: 'string', minLength: 1 },
-          LastName: { type: 'string', minLength: 1 },
-          Phone: { type: 'string', minLength: 8 },
-          MobilePhone: { type: 'string' },
-          Email: { type: 'string', format: 'email' },
-          Description: { type: 'string' },
-          AccountId: { type: 'string' },
-        },
-      },
       ConversationInput: {
         type: 'object',
         required: ['phone', 'contactName'],
@@ -310,22 +297,6 @@ const spec = {
         responses: {
           200: { description: 'Lead atualizado', content: { 'application/json': { schema: { type: 'object', properties: { ok: { type: 'boolean' }, message: { type: 'string' }, leadId: { type: 'string' } } } } } },
           401: { description: 'Não autorizado', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
-        },
-      },
-    },
-    '/api/contacts': {
-      post: {
-        tags: ['Contatos'],
-        summary: 'Criar Contato',
-        description: 'Cria um novo Contact no Salesforce.',
-        requestBody: {
-          required: true,
-          content: { 'application/json': { schema: { $ref: '#/components/schemas/ContactInput' } } },
-        },
-        responses: {
-          201: { description: 'Contato criado', content: { 'application/json': { schema: { type: 'object', properties: { ok: { type: 'boolean' }, contactId: { type: 'string' }, message: { type: 'string' } } } } } },
-          401: { description: 'Não autorizado', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
-          422: { description: 'Dados inválidos', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
         },
       },
     },

@@ -13,6 +13,7 @@
 // ============================================================
 
 import type { createConnection } from '@/lib/salesforce';
+import { withTimeout, SF_TIMEOUT } from '@/lib/sf-timeout';
 
 type Conn = ReturnType<typeof createConnection>;
 
@@ -37,7 +38,11 @@ const FIELD = 'Motivo_de_Perda__c';
 
 /** Descobre o Record Type padrão (ou master) do objeto. */
 async function resolveRecordTypeId(conn: Conn, objectName: string): Promise<string> {
-  const info = await conn.request<ObjectInfo>(`/ui-api/object-info/${objectName}`);
+  const info = await withTimeout(
+    conn.request<ObjectInfo>(`/ui-api/object-info/${objectName}`),
+    SF_TIMEOUT.uiapi,
+    `object-info ${objectName}`,
+  );
   if (info.defaultRecordTypeId) return info.defaultRecordTypeId;
   if (info.recordTypeInfos) {
     const def = Object.values(info.recordTypeInfos).find(
@@ -48,19 +53,29 @@ async function resolveRecordTypeId(conn: Conn, objectName: string): Promise<stri
   return MASTER_RECORD_TYPE_ID;
 }
 
+export interface MotivoOption {
+  value: string;
+  label: string;
+}
+
 /** Retorna os motivos de perda válidos para uma origem (LeadSource),
  *  resolvidos pela UI API respeitando a dependência e o Record Type.
- *  Lança erro se a origem não constar no mapa de controllerValues. */
+ *  Lança erro se a origem não constar no mapa de controllerValues.
+ *  Retorna { value, label } — label vem traduzido conforme idioma do user SF. */
 export async function getValidMotivosForOrigin(
   conn: Conn,
   objectName: string,
   leadSource: string,
   debug?: (msg: string, data: unknown) => void,
-): Promise<string[]> {
+): Promise<MotivoOption[]> {
   const recordTypeId = await resolveRecordTypeId(conn, objectName);
 
-  const resp = await conn.request<PicklistValuesResp>(
-    `/ui-api/object-info/${objectName}/picklist-values/${recordTypeId}`
+  const resp = await withTimeout(
+    conn.request<PicklistValuesResp>(
+      `/ui-api/object-info/${objectName}/picklist-values/${recordTypeId}`
+    ),
+    SF_TIMEOUT.uiapi,
+    `picklist-values ${objectName}`,
   );
 
   const field = resp.picklistFieldValues?.[FIELD];
@@ -85,11 +100,11 @@ export async function getValidMotivosForOrigin(
     );
   }
 
-  const valid = field.values
+  const valid: MotivoOption[] = field.values
     .filter((v) => Array.isArray(v.validFor) && v.validFor.includes(originIndex))
-    .map((v) => v.value);
+    .map((v) => ({ value: v.value, label: v.label || v.value }));
 
-  debug?.('UI API motivos válidos', { count: valid.length, values: valid });
+  debug?.('UI API motivos válidos', { count: valid.length, values: valid.map(v => v.value) });
 
   return valid;
 }
