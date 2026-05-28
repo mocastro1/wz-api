@@ -1,0 +1,45 @@
+# Caddyfile — reverse proxy HTTPS automatico (Let's Encrypt)
+# Variavel ${DOMAIN} vem do .env
+
+{$DOMAIN} {
+	encode zstd gzip
+
+	# Health check sem log (evita spam)
+	@health path /api/health
+	log_skip @health
+
+	# Repassa o IP real pro rate-limit da API
+	reverse_proxy wz-api:3000 {
+		header_up X-Real-IP {remote_host}
+		header_up X-Forwarded-For {remote_host}
+		header_up X-Forwarded-Proto {scheme}
+		header_up Host {host}
+
+		# Timeouts generosos pro OAuth callback do Salesforce
+		transport http {
+			read_timeout 60s
+			write_timeout 60s
+			dial_timeout 10s
+		}
+	}
+
+	# Logs em formato JSON
+	log {
+		output file /data/access.log {
+			roll_size 10mb
+			roll_keep 5
+		}
+		format json
+	}
+
+	# Headers de seguranca
+	header {
+		# HSTS — 1 ano
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		# Esconde tech stack
+		-Server
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "no-referrer"
+	}
+}

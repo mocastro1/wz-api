@@ -1,0 +1,13 @@
+* text=auto eol=lf
+
+# Shell scripts e configs precisam de LF para rodar em Linux
+*.sh text eol=lf
+Caddyfile text eol=lf
+Dockerfile text eol=lf
+docker-compose*.yml text eol=lf
+
+# Binarios
+*.png binary
+*.jpg binary
+*.ico binary
+*.woff2 binary
