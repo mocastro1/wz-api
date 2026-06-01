@@ -54,6 +54,8 @@ export async function POST(req: NextRequest) {
     // Busca apenas Leads ATIVOS:
     //   - não convertidos (IsConverted = false)
     //   - não desqualificados automaticamente (Desqualificado_Automacao__c = false)
+    //   - Status diferente de 'Não qualificado' (cobre desqualificação MANUAL feita
+    //     fora da extensão, que não seta o flag Desqualificado_Automacao__c)
     // Leads inativos não devem aparecer no badge — eles liberam o "Salvar como Lead" novamente.
     const soql = `
       SELECT Id, Name, FirstName, LastName, Phone, MobilePhone,
@@ -67,6 +69,7 @@ export async function POST(req: NextRequest) {
           OR beetalk__PhoneOrMobilePhone__c LIKE '%${pattern}')
         AND IsConverted = false
         AND Desqualificado_Automacao__c = false
+        AND Status != 'Não qualificado'
       ORDER BY CreatedDate DESC
       LIMIT 5
     `;
