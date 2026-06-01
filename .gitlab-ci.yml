@@ -1,0 +1,7 @@
+workflow:
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+
+include:
+  - project: "helms/deploy"
+    file: ".gitlabci.yml"
