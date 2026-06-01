@@ -87,16 +87,19 @@ export async function POST(req: NextRequest) {
       LIMIT 5
     `;
 
-    const leadResult = await withTimeout(conn.query(soql), SF_TIMEOUT.query, 'lookup lead');
-    let oppRecords: Record<string, unknown>[] = [];
-    try {
-      const oppResult = await withTimeout(conn.query(oppSoql), SF_TIMEOUT.query, 'lookup opp');
-      oppRecords = (oppResult.records as Record<string, unknown>[]) || [];
-    } catch (e) {
-      if (isSfTimeout(e)) throw e; // timeout deve propagar (não silenciar)
-      // Org pode não ter Account.PersonMobilePhone se não usa Person Accounts
-      oppRecords = [];
-    }
+    // As duas queries são independentes — rodam EM PARALELO (Promise.all).
+    // Antes rodavam em série (Lead, depois Opp), somando as latências; agora
+    // o tempo total é o da query mais lenta, não a soma das duas.
+    const [leadResult, oppRecords] = await Promise.all([
+      withTimeout(conn.query(soql), SF_TIMEOUT.query, 'lookup lead'),
+      withTimeout(conn.query(oppSoql), SF_TIMEOUT.query, 'lookup opp')
+        .then((oppResult) => (oppResult.records as Record<string, unknown>[]) || [])
+        .catch((e) => {
+          if (isSfTimeout(e)) throw e; // timeout deve propagar (não silenciar)
+          // Org pode não ter Account.PersonMobilePhone se não usa Person Accounts
+          return [] as Record<string, unknown>[];
+        }),
+    ]);
 
     const leadRecords = leadResult.records || [];
 
