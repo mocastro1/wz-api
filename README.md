@@ -10,21 +10,26 @@ BFF em **Next.js** que faz a ponte entre a extensão Chrome (WhatsApp → Salesf
 | **jsforce** | Biblioteca oficial Node.js para Salesforce (OAuth, SOQL, CRUD) |
 | **NextAuth.js** | OAuth 2.0 com Salesforce (sessões server-side) |
 | **Zod** | Validação de dados de entrada |
-| **Vercel / Docker** | Deploy recomendado |
+| **Docker + Caddy** | Deploy em produção (HTTPS automático via Let's Encrypt) |
 
 ## Endpoints
 
 | Método | Rota | Descrição |
 |---|---|---|
 | `GET` | `/api/health` | Health check |
+| `GET` | `/api/docs` | Documentação OpenAPI (spec JSON) |
 | `POST` | `/api/leads` | Criar Lead |
 | `POST` | `/api/leads/lookup` | Buscar Lead por telefone |
 | `GET` | `/api/leads/:id` | Buscar Lead por ID |
 | `PATCH` | `/api/leads/:id` | Atualizar Lead |
 | `POST` | `/api/contacts` | Criar Contato |
 | `POST` | `/api/activities` | Criar Task/Atividade |
-| `POST` | `/api/conversations` | Registrar conversa WhatsApp |
-| `GET` | `/api/leads/picklist` | Valores de picklist do Lead |
+| `POST` | `/api/conversations` | Registrar conversa WhatsApp como Task |
+| `GET` | `/api/leads/picklist` | Picklist de campos do Lead |
+| `POST` | `/api/disqualify` | Desqualificar Lead ou Oportunidade |
+| `GET` | `/api/disqualify/picklist` | Motivos de perda (dependente de LeadSource) |
+| `POST` | `/api/telemetry` | Receber eventos de telemetria da extensão |
+| `GET/DELETE` | `/api/logs` | Logs internos da API |
 | `GET` | `/api/auth/check` | Verificar autenticação SF |
 | `*` | `/api/auth/[...nextauth]` | OAuth Salesforce (NextAuth) |
 
@@ -74,14 +79,22 @@ npm start
 
 ### 5. Deploy com Docker
 
-```bash
-# Build e start
-docker compose up -d --build
+**Desenvolvimento (sem HTTPS):**
 
-# Ou build manual
-docker build -t wz-api .
-docker run -d -p 3000:3000 --env-file .env wz-api
+```bash
+docker compose up -d --build
 ```
+
+**Produção (com Caddy + HTTPS automático):**
+
+```bash
+# Preencher .env com os valores reais (DOMAIN, ACME_EMAIL, NEXTAUTH_SECRET, etc.)
+cp .env.example .env && nano .env
+
+docker compose -f docker-compose.prod.yml up -d --build
+```
+
+O Caddy obtém o certificado TLS automaticamente via Let's Encrypt e faz proxy para a API na porta 3000.
 
 ## Autenticação
 
@@ -147,26 +160,40 @@ wz-api/
 ├── src/
 │   ├── app/
 │   │   ├── api/
-│   │   │   ├── activities/route.ts    — POST Task
+│   │   │   ├── activities/route.ts        — POST Task
 │   │   │   ├── auth/
-│   │   │   │   ├── check/route.ts     — GET auth check
+│   │   │   │   ├── check/route.ts         — GET auth check
 │   │   │   │   └── [...nextauth]/route.ts — OAuth
-│   │   │   ├── contacts/route.ts      — POST Contact
-│   │   │   ├── conversations/route.ts — POST conversa
-│   │   │   ├── health/route.ts        — GET health
+│   │   │   ├── contacts/route.ts          — POST Contact
+│   │   │   ├── conversations/route.ts     — POST conversa como Task
+│   │   │   ├── disqualify/
+│   │   │   │   ├── route.ts               — POST desqualificar Lead/Opp
+│   │   │   │   └── picklist/route.ts      — GET motivos de perda
+│   │   │   ├── docs/route.ts              — GET OpenAPI spec
+│   │   │   ├── health/route.ts            — GET health
 │   │   │   ├── leads/
-│   │   │   │   ├── route.ts           — POST criar Lead
-│   │   │   │   ├── lookup/route.ts    — POST buscar por tel
-│   │   │   │   ├── picklist/route.ts   — GET picklist values
-│   │   │   │   └── [id]/route.ts      — GET/PATCH Lead
-│   │   │   └── logs/route.ts          — GET/DELETE logs
+│   │   │   │   ├── route.ts               — POST criar Lead
+│   │   │   │   ├── lookup/route.ts        — POST buscar por tel
+│   │   │   │   ├── picklist/route.ts      — GET picklist values
+│   │   │   │   └── [id]/route.ts          — GET/PATCH Lead
+│   │   │   ├── logs/route.ts              — GET/DELETE logs
+│   │   │   └── telemetry/route.ts         — POST eventos da extensão
 │   │   ├── layout.tsx
 │   │   └── page.tsx
 │   └── lib/
-│       ├── api-middleware.ts  — CORS, auth, helpers
-│       ├── salesforce.ts      — jsforce client, phone utils
-│       └── schemas.ts         — Zod validation schemas
+│       ├── api-middleware.ts      — CORS, auth, helpers
+│       ├── logger.ts              — Logger interno com buffer em memória
+│       ├── motivo-perda.ts        — Motivos de perda via UI API do SF
+│       ├── rate-limit.ts          — Rate limiting por IP/token
+│       ├── rate-limit-middleware.ts
+│       ├── salesforce.ts          — jsforce client, phone utils, sanitização
+│       ├── schemas.ts             — Zod validation schemas
+│       └── sf-timeout.ts          — Timeout e retry para chamadas SF
 ├── .env.example
+├── Dockerfile
+├── docker-compose.yml             — Dev local
+├── docker-compose.prod.yml        — Produção (com Caddy)
+├── Caddyfile
 ├── next.config.js
 ├── package.json
 └── tsconfig.json
