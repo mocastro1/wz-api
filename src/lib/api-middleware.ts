@@ -4,24 +4,31 @@
 // ============================================================
 
 import { NextRequest, NextResponse } from 'next/server';
+import crypto from 'crypto';
 
-// Origens permitidas: extensão Chrome + localhost dev + produção
+// ID FIXO da extensão (estável dev↔publicada via "key" no manifest).
+// Sobrescrevível por env caso mude. Travar o ID evita que QUALQUER extensão
+// Chrome instalada na máquina do usuário consiga chamar a API.
+const EXTENSION_ID = process.env.EXTENSION_ID || 'pkmojofnhnmddfpokdgeihencmjggamj';
+
+// Origens permitidas: a extensão (ID específico) + localhost dev + extras por env.
 const ALLOWED_ORIGINS = [
-  'chrome-extension://',  // qualquer extensão Chrome (prefixo)
+  `chrome-extension://${EXTENSION_ID}`,
   'http://localhost:3000',
   'http://localhost',
   ...(process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',') : []),
 ];
 
 function isAllowedOrigin(origin: string | null): boolean {
-  if (!origin) return true; // chamadas server-side sem Origin
-  return ALLOWED_ORIGINS.some(o => origin.startsWith(o));
+  if (!origin) return true; // chamadas sem Origin (server-side) — CORS não se aplica
+  return ALLOWED_ORIGINS.includes(origin); // match EXATO (não prefixo)
 }
 
 // ─── CORS preflight ────────────────────────────────────
 export function corsHeaders(req?: NextRequest) {
   const origin = req?.headers.get('origin') || '';
-  const allowOrigin = isAllowedOrigin(origin) ? (origin || '*') : 'null';
+  // Reflete a origin só se permitida; nunca emite '*'. Sem Origin → usa a 1ª permitida.
+  const allowOrigin = isAllowedOrigin(origin) ? (origin || ALLOWED_ORIGINS[0]) : 'null';
   return {
     'Access-Control-Allow-Origin': allowOrigin,
     'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
@@ -65,13 +72,22 @@ export async function extractSfCredentialsFromBody(body: Record<string, unknown>
 // ─── Valida Bearer token da API ──────────────────────────────
 export function validateApiToken(req: NextRequest): boolean {
   const expected = process.env.API_BEARER_TOKEN;
-  if (!expected) return true; // Se não configurado, permite (dev)
+  if (!expected) {
+    // FAIL-CLOSED em produção: sem token configurado, NÃO libera (evita que um
+    // deploy sem a env var deixe toda a API aberta). Em dev/test, permite.
+    return process.env.NODE_ENV !== 'production';
+  }
 
   const auth = req.headers.get('authorization');
   if (!auth) return false;
 
   const [scheme, token] = auth.split(' ');
-  return scheme === 'Bearer' && token === expected;
+  if (scheme !== 'Bearer' || !token) return false;
+
+  // Comparação em tempo constante (evita timing attack na verificação do token).
+  const a = Buffer.from(token);
+  const b = Buffer.from(expected);
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
 }
 
 // ─── Response helpers ────────────────────────────────────────
