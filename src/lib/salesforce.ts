@@ -94,10 +94,16 @@ export function sanitizeSfId(id: unknown): string {
 }
 
 /**
- * Sanitiza uma string para uso em SOQL (escapa aspas simples).
+ * Sanitiza uma string para uso em SOQL.
+ * Escapa, na ordem correta: a barra invertida (senão ela escaparia o próprio
+ * escape e quebraria a aspa de fechamento), a aspa simples e os wildcards de
+ * LIKE (% e _) — evitando tanto quebra de string quanto injeção de wildcard.
  */
 export function sanitizeSoqlString(value: string): string {
-  return value.replace(/'/g, "\\'");
+  return value
+    .replace(/\\/g, '\\\\')
+    .replace(/'/g, "\\'")
+    .replace(/([%_])/g, '\\$1');
 }
 
 /**

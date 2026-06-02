@@ -26,6 +26,23 @@ export const lookupSchema = z.object({
   phone: z.string().min(8, 'Telefone inválido').max(40),
 });
 
+// Allow-list dos campos que o cliente PODE atualizar via PATCH /api/leads/[id].
+// Tudo opcional (partial). Campos sensíveis/controlados pelo servidor ficam de
+// FORA de propósito: OwnerId (reatribuição), Concessionaria_Ref__c (derivada do
+// usuário SF na criação) e Motivo_de_Perda__c (desqualificação tem rota própria).
+// Zod descarta chaves desconhecidas → impede mass-assignment.
+export const leadPatchSchema = z.object({
+  FirstName:       z.string().min(1).max(40).optional(),
+  LastName:        z.string().min(1).max(80).optional(),
+  Company:         z.string().max(255).optional(),
+  Phone:           z.string().max(40).optional(),
+  MobilePhone:     z.string().max(40).optional(),
+  Status:          z.string().max(255).optional(),
+  LeadSource:      z.string().max(255).optional(),
+  Interesse_em__c: z.string().max(255).optional(),
+  Description:     z.string().max(32000).optional(),
+});
+
 export const activitySchema = z.object({
   recordId:        z.string().min(15).max(18),
   recordType:      z.enum(['Lead', 'Opportunity']),

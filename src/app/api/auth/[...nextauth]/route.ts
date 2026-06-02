@@ -50,9 +50,14 @@ const authOptions: NextAuthOptions = {
       return token;
     },
     async session({ session, token }) {
+      // NÃO expor o accessToken do Salesforce na sessão: o endpoint público
+      // /api/auth/session devolveria o token ao JS do navegador, e qualquer XSS
+      // poderia exfiltrá-lo e falar direto com a org SF. O token fica só no JWT
+      // (server-side). A extensão usa OAuth próprio (chrome.identity), não esta
+      // sessão — então remover não a afeta. Expomos só um flag de conexão.
       return {
         ...session,
-        accessToken: token.accessToken,
+        sfConnected: !!token.accessToken,
         instanceUrl: token.instanceUrl,
       };
     },
