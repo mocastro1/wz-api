@@ -30,14 +30,27 @@ else
 fi
 
 # ── 3. Gera secrets se ainda forem placeholders ─────────────
-if grep -q "GERE_NO_SERVIDOR_COM_openssl_rand_hex_32" .env; then
+if grep -q "^API_BEARER_TOKEN=GERE_NO_SERVIDOR_COM_openssl_rand_hex_32" .env; then
   TOKEN=$(openssl rand -hex 32)
-  sed -i.bak "s|API_BEARER_TOKEN=.*|API_BEARER_TOKEN=${TOKEN}|" .env
+  sed -i.bak "s|^API_BEARER_TOKEN=.*|API_BEARER_TOKEN=${TOKEN}|" .env
   step "API_BEARER_TOKEN gerado"
   echo ""
   warn "COPIE este token para o config.js da extensao Chrome:"
   printf "${YELLOW}    %s${RESET}\n\n" "${TOKEN}"
   read -p "Pressione ENTER apos copiar o token..." _
+fi
+
+# LOGS_ADMIN_TOKEN: segredo SEPARADO p/ /api/logs. Gera se for placeholder OU se
+# ainda nao existir no .env (ex.: deploy antigo, anterior a esta variavel).
+# NAO vai para a extensao — fica so no servidor.
+if ! grep -q "^LOGS_ADMIN_TOKEN=" .env || grep -q "^LOGS_ADMIN_TOKEN=GERE_NO_SERVIDOR" .env; then
+  ADMIN=$(openssl rand -hex 32)
+  if grep -q "^LOGS_ADMIN_TOKEN=" .env; then
+    sed -i.bak "s|^LOGS_ADMIN_TOKEN=.*|LOGS_ADMIN_TOKEN=${ADMIN}|" .env
+  else
+    echo "LOGS_ADMIN_TOKEN=${ADMIN}" >> .env
+  fi
+  step "LOGS_ADMIN_TOKEN gerado (use no Authorization: Bearer para ler /api/logs)"
 fi
 
 if grep -q "GERE_NO_SERVIDOR_COM_openssl_rand_base64_32" .env; then
