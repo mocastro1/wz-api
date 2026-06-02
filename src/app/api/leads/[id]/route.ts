@@ -5,7 +5,8 @@
 // ============================================================
 
 import { NextRequest } from 'next/server';
-import { createConnection } from '@/lib/salesforce';
+import { createConnection, sanitizeSfId } from '@/lib/salesforce';
+import { leadPatchSchema } from '@/lib/schemas';
 import {
   handleOptions, extractSfCredentials,
   validateApiToken, jsonOk, jsonError,
@@ -32,9 +33,12 @@ export async function GET(
     return jsonError('Credenciais Salesforce ausentes', 401);
   }
 
+  const id = sanitizeSfId(params.id);
+  if (!id) return jsonError('ID de Lead inválido', 422);
+
   try {
     const conn = createConnection(creds.accessToken, creds.instanceUrl);
-    const lead = await conn.sobject('Lead').retrieve(params.id);
+    const lead = await conn.sobject('Lead').retrieve(id);
 
     return jsonOk({ lead });
   } catch (e: unknown) {
@@ -59,15 +63,26 @@ export async function PATCH(
     return jsonError('Credenciais Salesforce ausentes', 401);
   }
 
+  const id = sanitizeSfId(params.id);
+  if (!id) return jsonError('ID de Lead inválido', 422);
+
   const body = await req.json();
 
-  // Remove campos que não devem ser atualizados diretamente
-  const { Id: _Id, id: _id, sfAccessToken: _t, sfInstanceUrl: _u, sfTokenType: _tt, ...updateData } = body;
+  // Allow-list de campos (zod descarta o resto) — impede mass-assignment:
+  // o cliente não pode setar OwnerId/Concessionaria/etc. via PATCH.
+  const parsed = leadPatchSchema.safeParse(body);
+  if (!parsed.success) {
+    return jsonError(`Dados inválidos: ${parsed.error.issues.map(i => i.message).join(', ')}`, 422);
+  }
+  const updateData = parsed.data;
+  if (Object.keys(updateData).length === 0) {
+    return jsonError('Nenhum campo válido para atualizar', 422);
+  }
 
   try {
     const conn = createConnection(creds.accessToken, creds.instanceUrl);
     const result = await conn.sobject('Lead').update({
-      Id: params.id,
+      Id: id,
       ...updateData,
     }) as unknown as { success: boolean; errors: unknown[] };
 
@@ -75,7 +90,7 @@ export async function PATCH(
       return jsonError(`Salesforce rejeitou: ${JSON.stringify(result.errors)}`, 400);
     }
 
-    return jsonOk({ message: 'Lead atualizado', leadId: params.id });
+    return jsonOk({ message: 'Lead atualizado', leadId: id });
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : 'Erro desconhecido';
     return jsonError(`Erro ao atualizar Lead: ${msg}`, 500);
