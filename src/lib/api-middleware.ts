@@ -31,7 +31,9 @@ export function corsHeaders(req?: NextRequest) {
 }
 
 export function handleOptions(req?: NextRequest) {
-  return NextResponse.json(null, { status: 204, headers: corsHeaders(req) });
+  // 204 não pode ter corpo — usar NextResponse direto (NextResponse.json(null)
+  // anexa body "null" e estoura 500 no preflight, quebrando o CORS do navegador).
+  return new NextResponse(null, { status: 204, headers: corsHeaders(req) });
 }
 
 // ─── Extrai credenciais SF do request ────────────────────────
