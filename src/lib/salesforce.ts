@@ -107,3 +107,31 @@ export function phoneSearchPattern(phone: string, lastDigits = 11): string {
   const normalized = normalizePhone(phone);
   return normalized.slice(-lastDigits);
 }
+
+/**
+ * Gera as variantes de número NACIONAL (DDD + número, SEM código do país) para
+ * busca SOSL `IN PHONE FIELDS`.
+ *
+ * O phone search do SOSL casa pelo número nacional e NÃO faz match por sufixo
+ * arbitrário (curinga à esquerda em telefone não funciona como no LIKE). Além
+ * disso, só aceita dígitos — formatação (+, parênteses) quebra a query.
+ *
+ * Como a base BR mistura celulares com e sem o 9º dígito, retornamos as duas
+ * variantes (com e sem o 9 após o DDD); o caller junta com " OR " no FIND.
+ * Ex.: '5567992265014' → ['67992265014', '6792265014'].
+ */
+export function phoneSoslVariants(phone: string): string[] {
+  const norm = normalizePhone(phone);                 // 55 + DDD + 9 + 8 díg (13)
+  const national = norm.startsWith('55') ? norm.slice(2) : norm; // DDD + número
+  const variants = new Set<string>();
+  if (national.length >= 10) variants.add(national);
+  // celular com 9 → também gera a forma sem o 9
+  if (national.length === 11 && national[2] === '9') {
+    variants.add(national.slice(0, 2) + national.slice(3));
+  }
+  // veio sem o 9 → também gera a forma com o 9
+  if (national.length === 10) {
+    variants.add(national.slice(0, 2) + '9' + national.slice(2));
+  }
+  return [...variants].filter((v) => v.length >= 8);
+}

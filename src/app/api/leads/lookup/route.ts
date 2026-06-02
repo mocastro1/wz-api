@@ -3,7 +3,7 @@
 // ============================================================
 
 import { NextRequest } from 'next/server';
-import { createConnection, phoneSearchPattern, sanitizeSoqlString } from '@/lib/salesforce';
+import { createConnection, phoneSoslVariants, sanitizeSfId } from '@/lib/salesforce';
 import { lookupSchema } from '@/lib/schemas';
 import { createRouteLogger } from '@/lib/logger';
 import { withTimeout, SF_TIMEOUT, isSfTimeout } from '@/lib/sf-timeout';
@@ -12,6 +12,10 @@ import {
   handleOptions, extractSfCredentials, extractSfCredentialsFromBody,
   validateApiToken, jsonOk, jsonError,
 } from '@/lib/api-middleware';
+
+// Registro retornado pelo SOSL: cada hit traz attributes.type ('Lead' | 'Account' …)
+// para distinguir o sObject. Demais campos vêm conforme o RETURNING.
+type SoslRecord = { attributes?: { type?: string }; Id?: string; [k: string]: unknown };
 
 export async function OPTIONS() {
   return handleOptions();
@@ -43,68 +47,124 @@ export async function POST(req: NextRequest) {
     return jsonError(`Dados inválidos: ${parsed.error.issues.map(i => i.message).join(', ')}`, 422);
   }
 
-  // phoneSearchPattern já retorna só dígitos (via normalizePhone),
-  // mas sanitizeSoqlString garante defesa em profundidade contra SOQL injection.
-  const pattern = sanitizeSoqlString(phoneSearchPattern(parsed.data.phone));
-  log.debug('Pattern SOQL', { pattern, instanceUrl: creds.instanceUrl });
+  // Variantes do número nacional (DDD+número), só dígitos, para o SOSL.
+  // phoneSoslVariants já lida com a ambiguidade do 9º dígito (BR) e remove
+  // qualquer formatação — o termo é numérico puro, seguro de interpolar no SOSL.
+  const variants = phoneSoslVariants(parsed.data.phone);
+  log.debug('Variantes SOSL', { variants, instanceUrl: creds.instanceUrl });
+
+  // Telefone curto/inválido → nada a buscar.
+  if (variants.length === 0) {
+    return jsonOk({ found: false, leads: [] });
+  }
+
+  // FIND {<variante1> OR <variante2>} — cobre celular com e sem o 9.
+  const findTerm = variants.join(' OR ');
 
   try {
     const conn = createConnection(creds.accessToken, creds.instanceUrl);
 
-    // Busca apenas Leads ATIVOS:
-    //   - não convertidos (IsConverted = false)
-    //   - não desqualificados automaticamente (Desqualificado_Automacao__c = false)
-    //   - Status diferente de 'Não qualificado' (cobre desqualificação MANUAL feita
-    //     fora da extensão, que não seta o flag Desqualificado_Automacao__c)
-    // Leads inativos não devem aparecer no badge — eles liberam o "Salvar como Lead" novamente.
-    const soql = `
-      SELECT Id, Name, FirstName, LastName, Phone, MobilePhone,
-             beetalk__PhoneOrMobilePhone__c, Status, LeadSource,
-             Company, OwnerId, Owner.Name, CreatedDate,
-             IsConverted, ConvertedOpportunityId,
-             Motivo_de_Perda__c
-      FROM Lead
-      WHERE (Phone LIKE '%${pattern}'
-          OR MobilePhone LIKE '%${pattern}'
-          OR beetalk__PhoneOrMobilePhone__c LIKE '%${pattern}')
-        AND IsConverted = false
-        AND Desqualificado_Automacao__c = false
-        AND Status != 'Não qualificado'
-      ORDER BY CreatedDate DESC
-      LIMIT 5
+    // ─── Busca via SOSL (índice de busca, NÃO full table scan) ──────────────
+    // O LIKE '%...' antigo forçava full scan em produção: curinga à ESQUERDA
+    // não usa índice, então em orgs grandes a query varria a tabela inteira.
+    // SOSL "IN PHONE FIELDS" usa o índice de busca do Salesforce e já normaliza
+    // números de telefone (remove formatação) — escala bem em produção.
+    //
+    // Em UMA chamada o SOSL retorna:
+    //   - Leads ATIVOS (não convertidos, não desqualificados pela automação,
+    //     Status != 'Não qualificado' — cobre desqualificação MANUAL).
+    //   - Accounts cujo telefone bate (Person Accounts via PersonMobilePhone e
+    //     contas comuns via Phone) — usados abaixo para achar as Oportunidades.
+    const sosl = `
+      FIND {${findTerm}} IN PHONE FIELDS RETURNING
+        Lead(Id, Name, FirstName, LastName, Phone, MobilePhone,
+             beetalk__PhoneOrMobilePhone__c, Status, LeadSource, Company,
+             OwnerId, Owner.Name, CreatedDate, IsConverted,
+             ConvertedOpportunityId, Motivo_de_Perda__c
+             WHERE IsConverted = false
+               AND Desqualificado_Automacao__c = false
+               AND Status != 'Não qualificado'
+             ORDER BY CreatedDate DESC LIMIT 5),
+        Account(Id LIMIT 50)
     `;
 
-    // Em paralelo: busca Oportunidades ATIVAS (não fechadas) pelo telefone do Contact relacionado
-    // Critério da regra de negócio: IsClosed = false (Opp aberta = ativa)
-    const oppSoql = `
-      SELECT Id, Name, StageName, IsClosed,
-             COTACAO_FATURADA__C, MOTIVO_DE_PERDA__C,
-             Amount, CloseDate, OwnerId, Owner.Name,
-             AccountId, ContactId,
-             Account.PersonMobilePhone, Account.Phone
-      FROM Opportunity
-      WHERE IsClosed = false
-        AND (Account.PersonMobilePhone LIKE '%${pattern}'
-          OR Account.Phone LIKE '%${pattern}')
-      ORDER BY CreatedDate DESC
-      LIMIT 5
-    `;
+    const search = await withTimeout(conn.search(sosl), SF_TIMEOUT.query, 'lookup sosl');
+    const hits = (search.searchRecords as SoslRecord[]) || [];
 
-    // As duas queries são independentes — rodam EM PARALELO (Promise.all).
-    // Antes rodavam em série (Lead, depois Opp), somando as latências; agora
-    // o tempo total é o da query mais lenta, não a soma das duas.
-    const [leadResult, oppRecords] = await Promise.all([
-      withTimeout(conn.query(soql), SF_TIMEOUT.query, 'lookup lead'),
-      withTimeout(conn.query(oppSoql), SF_TIMEOUT.query, 'lookup opp')
-        .then((oppResult) => (oppResult.records as Record<string, unknown>[]) || [])
-        .catch((e) => {
-          if (isSfTimeout(e)) throw e; // timeout deve propagar (não silenciar)
-          // Org pode não ter Account.PersonMobilePhone se não usa Person Accounts
-          return [] as Record<string, unknown>[];
-        }),
-    ]);
+    let leadRecords = hits.filter((r) => r.attributes?.type === 'Lead');
+    const accountIds = hits
+      .filter((r) => r.attributes?.type === 'Account')
+      .map((r) => sanitizeSfId(r.Id))
+      .filter(Boolean);
 
-    const leadRecords = leadResult.records || [];
+    // ─── Fallback p/ o lag de indexação do SOSL ────────────────────────────
+    // O índice de busca do SOSL tem latência de alguns segundos: um Lead
+    // recém-criado pode ainda não estar indexado e não aparecer acima — o que
+    // quebraria o badge de dedup logo após salvar um Lead.
+    // Quando o SOSL não acha Lead, caímos num SOQL restrito aos Leads RECENTES
+    // (CreatedDate é indexado → consulta seletiva e barata, sem full scan).
+    // O LIKE '%variante' aqui é seguro: variantes são dígitos puros.
+    if (leadRecords.length === 0) {
+      const likeClauses = variants
+        .flatMap((v) => [
+          `Phone LIKE '%${v}'`,
+          `MobilePhone LIKE '%${v}'`,
+          `beetalk__PhoneOrMobilePhone__c LIKE '%${v}'`,
+        ])
+        .join(' OR ');
+      const fallbackSoql = `
+        SELECT Id, Name, FirstName, LastName, Phone, MobilePhone,
+               beetalk__PhoneOrMobilePhone__c, Status, LeadSource, Company,
+               OwnerId, Owner.Name, CreatedDate, IsConverted,
+               ConvertedOpportunityId, Motivo_de_Perda__c
+        FROM Lead
+        WHERE CreatedDate = LAST_N_DAYS:1
+          AND IsConverted = false
+          AND Desqualificado_Automacao__c = false
+          AND Status != 'Não qualificado'
+          AND (${likeClauses})
+        ORDER BY CreatedDate DESC
+        LIMIT 5
+      `;
+      try {
+        const fb = await withTimeout(conn.query(fallbackSoql), SF_TIMEOUT.query, 'lookup lead fallback');
+        leadRecords = (fb.records as SoslRecord[]) || [];
+        if (leadRecords.length > 0) {
+          log.info('Lead achado via fallback SOQL (provável lag de indexação do SOSL)');
+        }
+      } catch (e) {
+        if (isSfTimeout(e)) throw e; // timeout deve propagar
+        // qualquer outro erro no fallback não deve derrubar o lookup principal
+      }
+    }
+
+    // Oportunidades ATIVAS (IsClosed = false) das contas encontradas.
+    // AccountId é FK INDEXADA, então este SELECT é rápido — bem diferente do
+    // LIKE '%...' sobre Account.PersonMobilePhone do código antigo.
+    // Só roda se o SOSL achou alguma conta pelo telefone.
+    let oppRecords: Record<string, unknown>[] = [];
+    if (accountIds.length > 0) {
+      const idList = accountIds.map((id) => `'${id}'`).join(',');
+      const oppSoql = `
+        SELECT Id, Name, StageName, IsClosed,
+               COTACAO_FATURADA__C, MOTIVO_DE_PERDA__C,
+               Amount, CloseDate, OwnerId, Owner.Name,
+               AccountId, ContactId,
+               Account.PersonMobilePhone, Account.Phone
+        FROM Opportunity
+        WHERE IsClosed = false
+          AND AccountId IN (${idList})
+        ORDER BY CreatedDate DESC
+        LIMIT 5
+      `;
+      try {
+        const oppResult = await withTimeout(conn.query(oppSoql), SF_TIMEOUT.query, 'lookup opp');
+        oppRecords = (oppResult.records as Record<string, unknown>[]) || [];
+      } catch (e) {
+        if (isSfTimeout(e)) throw e; // timeout deve propagar (não silenciar)
+        oppRecords = [];
+      }
+    }
 
     if (leadRecords.length === 0 && oppRecords.length === 0) {
       return jsonOk({ found: false, leads: [] });
