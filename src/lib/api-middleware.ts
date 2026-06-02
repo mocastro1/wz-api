@@ -70,6 +70,17 @@ export async function extractSfCredentialsFromBody(body: Record<string, unknown>
 }
 
 // ─── Valida Bearer token da API ──────────────────────────────
+// Compara o Bearer do header com o esperado em tempo constante (anti timing-attack).
+function bearerEquals(req: NextRequest, expected: string): boolean {
+  const auth = req.headers.get('authorization');
+  if (!auth) return false;
+  const [scheme, token] = auth.split(' ');
+  if (scheme !== 'Bearer' || !token) return false;
+  const a = Buffer.from(token);
+  const b = Buffer.from(expected);
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
 export function validateApiToken(req: NextRequest): boolean {
   const expected = process.env.API_BEARER_TOKEN;
   if (!expected) {
@@ -77,17 +88,17 @@ export function validateApiToken(req: NextRequest): boolean {
     // deploy sem a env var deixe toda a API aberta). Em dev/test, permite.
     return process.env.NODE_ENV !== 'production';
   }
+  return bearerEquals(req, expected);
+}
 
-  const auth = req.headers.get('authorization');
-  if (!auth) return false;
-
-  const [scheme, token] = auth.split(' ');
-  if (scheme !== 'Bearer' || !token) return false;
-
-  // Comparação em tempo constante (evita timing attack na verificação do token).
-  const a = Buffer.from(token);
-  const b = Buffer.from(expected);
-  return a.length === b.length && crypto.timingSafeEqual(a, b);
+// Gate para endpoints ADMINISTRATIVOS (ex.: /api/logs), com um segredo SEPARADO
+// do bearer da extensão. O bearer da extensão é embutido no cliente publicado e,
+// portanto, extraível — não serve para proteger logs (que contêm PII).
+// LOGS_ADMIN_TOKEN só é conhecido pela operação. Fail-closed em produção.
+export function validateAdminToken(req: NextRequest): boolean {
+  const expected = process.env.LOGS_ADMIN_TOKEN;
+  if (!expected) return process.env.NODE_ENV !== 'production';
+  return bearerEquals(req, expected);
 }
 
 // ─── Response helpers ────────────────────────────────────────

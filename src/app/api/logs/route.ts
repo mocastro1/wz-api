@@ -5,14 +5,16 @@
 
 import { NextRequest } from 'next/server';
 import { getLogs, clearLogs, LogLevel } from '@/lib/logger';
-import { handleOptions, validateApiToken, jsonOk, jsonError } from '@/lib/api-middleware';
+import { handleOptions, validateAdminToken, jsonOk, jsonError } from '@/lib/api-middleware';
 
 export async function OPTIONS() {
   return handleOptions();
 }
 
 export async function GET(req: NextRequest) {
-  if (!validateApiToken(req)) return jsonError('Token inválido', 401);
+  // Admin-only: logs contêm PII. Protegido por LOGS_ADMIN_TOKEN (não o bearer
+  // da extensão, que é público depois de publicada).
+  if (!validateAdminToken(req)) return jsonError('Token inválido', 401);
 
   const { searchParams } = new URL(req.url);
   const level = searchParams.get('level') as LogLevel | null;
@@ -23,7 +25,7 @@ export async function GET(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
-  if (!validateApiToken(req)) return jsonError('Token inválido', 401);
+  if (!validateAdminToken(req)) return jsonError('Token inválido', 401);
   clearLogs();
   return jsonOk({ cleared: true });
 }

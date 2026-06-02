@@ -52,14 +52,35 @@ function push(level: LogLevel, route: string, msg: string, data?: unknown, durat
   console.log(`${c}[wz-api][${level.toUpperCase()}]${reset} ${route} — ${msg}${dur}${dataStr}`);
 }
 
-// Remove campos sensíveis antes de logar
-function sanitize(obj: unknown): unknown {
+// Chaves cujo valor é segredo → redige por completo.
+const SECRET_KEYS = [
+  'access_token', 'sfaccesstoken', 'x-sf-access-token', 'authorization',
+  'password', 'secret', 'refresh_token',
+];
+// Chaves de telefone (PII) → mascara, mantendo só os últimos 4 dígitos.
+const PHONE_KEY_HINTS = ['phone', 'mobilephone', 'sellerphone'];
+
+function maskPhone(v: unknown): unknown {
+  if (typeof v !== 'string') return v;
+  const digits = v.replace(/\D/g, '');
+  if (digits.length < 4) return '••••';
+  return '••••' + digits.slice(-4);
+}
+
+// Remove segredos e mascara PII (telefones) antes de logar — recursivo, pois
+// os dados aparecem aninhados (telemetry.detail, mensagens de conversa, etc.).
+function sanitize(obj: unknown, depth = 0): unknown {
+  if (depth > 6) return '[…]';
+  if (Array.isArray(obj)) return obj.map((v) => sanitize(v, depth + 1));
   if (!obj || typeof obj !== 'object') return obj;
-  const clone = { ...(obj as Record<string, unknown>) };
-  for (const key of ['access_token', 'sfAccessToken', 'X-SF-Access-Token', 'Authorization', 'password', 'secret']) {
-    if (key in clone) clone[key] = '[REDACTED]';
+  const out: Record<string, unknown> = {};
+  for (const [k, val] of Object.entries(obj as Record<string, unknown>)) {
+    const lk = k.toLowerCase();
+    if (SECRET_KEYS.includes(lk)) out[k] = '[REDACTED]';
+    else if (PHONE_KEY_HINTS.some((h) => lk.includes(h))) out[k] = maskPhone(val);
+    else out[k] = sanitize(val, depth + 1);
   }
-  return clone;
+  return out;
 }
 
 export function getLogs(level?: LogLevel, last = 100): LogEntry[] {
