@@ -80,7 +80,7 @@ export async function POST(req: NextRequest) {
         Lead(Id, Name, FirstName, LastName, Phone, MobilePhone,
              beetalk__PhoneOrMobilePhone__c, Status, LeadSource, Company,
              OwnerId, Owner.Name, CreatedDate, IsConverted,
-             ConvertedOpportunityId, Motivo_de_Perda__c
+             ConvertedOpportunityId, Motivo_de_Perda__c, Modelo__r.Name
              WHERE IsConverted = false
                AND Status != 'Não qualificado'
              ORDER BY CreatedDate DESC LIMIT 5),
@@ -115,7 +115,7 @@ export async function POST(req: NextRequest) {
         SELECT Id, Name, FirstName, LastName, Phone, MobilePhone,
                beetalk__PhoneOrMobilePhone__c, Status, LeadSource, Company,
                OwnerId, Owner.Name, CreatedDate, IsConverted,
-               ConvertedOpportunityId, Motivo_de_Perda__c
+               ConvertedOpportunityId, Motivo_de_Perda__c, Modelo__r.Name
         FROM Lead
         WHERE CreatedDate = LAST_N_DAYS:1
           AND IsConverted = false
@@ -147,7 +147,7 @@ export async function POST(req: NextRequest) {
         SELECT Id, Name, StageName, IsClosed,
                COTACAO_FATURADA__C, MOTIVO_DE_PERDA__C,
                Amount, CloseDate, OwnerId, Owner.Name,
-               AccountId, ContactId,
+               AccountId, ContactId, Modelo__r.Name,
                Account.PersonMobilePhone, Account.Phone
         FROM Opportunity
         WHERE IsClosed = false
@@ -173,6 +173,7 @@ export async function POST(req: NextRequest) {
       oppId:           o.Id,
       oppName:         o.Name,
       stageName:       o.StageName,
+      modelo:          (o.Modelo__r as Record<string, unknown>)?.Name || null,
       isClosed:        o.IsClosed || false,
       cotacaoFaturada: o.COTACAO_FATURADA__C || false,
       motivoPerda:     o.MOTIVO_DE_PERDA__C || null,
@@ -186,6 +187,7 @@ export async function POST(req: NextRequest) {
     const leads = leadRecords.map((r: Record<string, unknown>) => ({
       leadId:        r.Id,
       leadName:      r.Name,
+      modelo:        (r.Modelo__r as Record<string, unknown>)?.Name || null,
       firstName:     r.FirstName,
       lastName:      r.LastName,
       phone:         r.Phone,
