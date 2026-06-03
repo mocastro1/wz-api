@@ -93,6 +93,7 @@ const spec = {
         properties: {
           leadId: { type: 'string' },
           leadName: { type: 'string' },
+          modelo: { type: 'string', nullable: true },
           firstName: { type: 'string' },
           lastName: { type: 'string' },
           phone: { type: 'string' },
@@ -119,6 +120,7 @@ const spec = {
           oppId: { type: 'string' },
           oppName: { type: 'string' },
           stageName: { type: 'string' },
+          modelo: { type: 'string', nullable: true },
           cotacaoFaturada: { type: 'boolean' },
           motivoPerda: { type: 'string', nullable: true },
           amount: { type: 'number', nullable: true },
