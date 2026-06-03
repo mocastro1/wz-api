@@ -71,8 +71,8 @@ export async function POST(req: NextRequest) {
     // números de telefone (remove formatação) — escala bem em produção.
     //
     // Em UMA chamada o SOSL retorna:
-    //   - Leads ATIVOS (não convertidos, não desqualificados pela automação,
-    //     Status != 'Não qualificado' — cobre desqualificação MANUAL).
+    //   - Leads ATIVOS: não convertidos e Status != 'Não qualificado'
+    //     (cobre desqualificação manual E via extensão — ambas setam o Status).
     //   - Accounts cujo telefone bate (Person Accounts via PersonMobilePhone e
     //     contas comuns via Phone) — usados abaixo para achar as Oportunidades.
     const sosl = `
@@ -82,7 +82,6 @@ export async function POST(req: NextRequest) {
              OwnerId, Owner.Name, CreatedDate, IsConverted,
              ConvertedOpportunityId, Motivo_de_Perda__c
              WHERE IsConverted = false
-               AND Desqualificado_Automacao__c = false
                AND Status != 'Não qualificado'
              ORDER BY CreatedDate DESC LIMIT 5),
         Account(Id LIMIT 50)
@@ -120,7 +119,6 @@ export async function POST(req: NextRequest) {
         FROM Lead
         WHERE CreatedDate = LAST_N_DAYS:1
           AND IsConverted = false
-          AND Desqualificado_Automacao__c = false
           AND Status != 'Não qualificado'
           AND (${likeClauses})
         ORDER BY CreatedDate DESC

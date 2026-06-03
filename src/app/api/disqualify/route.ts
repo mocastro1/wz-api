@@ -76,7 +76,7 @@ export async function POST(req: NextRequest) {
     let leadSource: string | null = null;
     try {
       const fields = sobjectName === 'Lead'
-        ? 'Id, Status, LeadSource, Motivo_de_Perda__c, Desqualificado_Automacao__c'
+        ? 'Id, Status, LeadSource, Motivo_de_Perda__c'
         : 'Id, StageName, LeadSource, Motivo_de_Perda__c';
 
       const r = await withTimeout(
@@ -148,10 +148,9 @@ export async function POST(req: NextRequest) {
 
     if (sobjectName === 'Lead') {
       updatePayload = {
-        Id:                          safeId,
-        Status:                      'Não qualificado',
-        Motivo_de_Perda__c:          data.motivoDePerda,
-        Desqualificado_Automacao__c:  true,
+        Id:                 safeId,
+        Status:             'Não qualificado',
+        Motivo_de_Perda__c: data.motivoDePerda,
       };
     } else {
       updatePayload = {
@@ -187,12 +186,11 @@ export async function POST(req: NextRequest) {
     try {
       if (sobjectName === 'Lead') {
         const r = await conn.query<Record<string, unknown>>(
-          `SELECT Id, Status, Motivo_de_Perda__c, Desqualificado_Automacao__c FROM Lead WHERE Id = '${safeId}' LIMIT 1`
+          `SELECT Id, Status, Motivo_de_Perda__c FROM Lead WHERE Id = '${safeId}' LIMIT 1`
         );
         verification = r.records?.[0] ?? null;
         actuallyDisqualified = verification?.Status === 'Não qualificado'
-                            && !!verification?.Motivo_de_Perda__c
-                            && verification?.Desqualificado_Automacao__c === true;
+                            && !!verification?.Motivo_de_Perda__c;
       } else {
         const r = await conn.query<Record<string, unknown>>(
           `SELECT Id, StageName, Motivo_de_Perda__c FROM Opportunity WHERE Id = '${safeId}' LIMIT 1`
