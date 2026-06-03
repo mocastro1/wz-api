@@ -16,6 +16,7 @@ export const leadSchema = z.object({
   LeadSource:            z.string().max(255).default('Redes sociais do vendedor'),
   Concessionaria_Ref__c: z.string().max(255).optional(),
   Interesse_em__c:       z.string().max(255).optional(),
+  Modelo__c:             z.string().max(18).optional(), // lookup p/ Product2 (Id 15/18 chars)
   Description:           z.string().max(32000).optional(), // SF: Lead.Description = Long Text 32k
   // Campos extras da extensão
   sellerPhone:           z.string().max(40).optional(),
