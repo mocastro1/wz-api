@@ -88,6 +88,10 @@ export async function POST(req: NextRequest) {
     };
 
     if (data.Interesse_em__c) leadRecord.Interesse_em__c = data.Interesse_em__c;
+    if (data.Modelo__c) {
+      const safeModelo = sanitizeSfId(data.Modelo__c);
+      if (safeModelo) leadRecord.Modelo__c = safeModelo;
+    }
     if (data.MobilePhone) leadRecord.MobilePhone = normalizePhone(data.MobilePhone);
     if (data.Description) leadRecord.Description = data.Description;
     if (data.sellerPhone) leadRecord.Description = `${leadRecord.Description || ''}\nVendedor: ${data.sellerPhone}`.trim();
