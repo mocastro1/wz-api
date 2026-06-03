@@ -53,6 +53,7 @@ export async function GET(req: NextRequest) {
       FROM Product2
       WHERE Name LIKE '%${safeQ}%'
         AND IsActive = true
+        AND Family != null
       ORDER BY Name ASC
       LIMIT 10
     `;
