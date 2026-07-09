@@ -12,6 +12,7 @@ import {
   jsonError,
   jsonOk,
   validateApiToken,
+  validateAdminToken,
 } from '@/lib/api-middleware';
 import { createRouteLogger, getLogs } from '@/lib/logger';
 import { checkRateLimit } from '@/lib/rate-limit-middleware';
@@ -26,6 +27,7 @@ const TelemetryEventSchema = z.object({
     'extraction_failed',
     'strategy_used',
     'group_detection',
+    'config_source', // remote|fallback — mostra se a config remota chegou na extensão
   ]),
   context: z.string().max(200),
   detail: z.record(z.unknown()).optional(),
@@ -81,9 +83,12 @@ export async function POST(req: NextRequest) {
   return jsonOk({ received: events.length }, 200, req);
 }
 
-// GET — lista eventos recentes (para dashboards futuros)
+// GET — lista eventos recentes (para dashboards futuros).
+// Admin-only: os eventos logados podem conter identificador do contato em
+// processamento. Protegido por LOGS_ADMIN_TOKEN — NÃO pelo bearer da extensão,
+// que é público depois de publicada. (A extensão só faz POST aqui, nunca GET.)
 export async function GET(req: NextRequest) {
-  if (!validateApiToken(req)) {
+  if (!validateAdminToken(req)) {
     return jsonError('Não autorizado', 401, req);
   }
 

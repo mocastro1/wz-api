@@ -17,6 +17,9 @@ services:
       - ALLOWED_ORIGINS=${ALLOWED_ORIGINS}
     env_file:
       - .env
+    volumes:
+      # Config remota da extensão: editar no host vale na hora, sem rebuild
+      - ./config:/app/config:ro
     networks:
       - wz-net
     healthcheck:
