@@ -1,0 +1,44 @@
+{
+  "version": 1,
+  "updatedAt": "2026-07-09",
+  "comment": "Config remota da extensão WZ Conecta. Edite este arquivo no servidor e a mudança chega aos vendedores na próxima recarga do WhatsApp Web (cache de 6h na extensão). NÃO precisa rebuild nem redeploy — o arquivo é montado como volume. Formato validado pela rota GET /api/extension/config; se ficar inválido, a extensão usa o fallback embutido.",
+  "selectorGroups": {
+    "header": [
+      "[data-testid=\"conversation-header\"]",
+      "[data-testid=\"chat-header\"]",
+      "header._amid",
+      "header[data-testid]",
+      "#main header"
+    ],
+    "contactTitle": [
+      "[data-testid=\"conversation-info-header\"] span[title]",
+      "[data-testid=\"chat-title\"] span[title]",
+      "#main header span[title]",
+      "#main header span[dir=\"auto\"]"
+    ],
+    "contactSub": [
+      "[data-testid=\"conversation-info-header\"] div[title]",
+      "#main header span[title] ~ span",
+      "#main header div[title]"
+    ],
+    "drawerContainer": [
+      "[data-testid=\"drawer-right\"]",
+      "[data-testid~=\"chat-info-drawer\"]",
+      "[data-testid~=\"contact-info-header\"]",
+      "[data-testid~=\"contact-info-drawer\"]",
+      "section[data-testid~=\"contact-info\"]"
+    ],
+    "drawerContactName": [
+      "[data-testid~=\"contact-info-subtitle\"]",
+      "[data-testid~=\"contact-info-name\"]",
+      "[data-testid~=\"conversation-info-header-chat-title\"]"
+    ],
+    "drawerContactPhone": [
+      "[data-testid~=\"selectable-text\"]"
+    ]
+  },
+  "flags": {
+    "autoDrawerEnabled": true,
+    "storeHookEnabled": true
+  }
+}
