@@ -27,6 +27,7 @@ const TelemetryEventSchema = z.object({
     'extraction_failed',
     'strategy_used',
     'group_detection',
+    'config_source', // remote|fallback — mostra se a config remota chegou na extensão
   ]),
   context: z.string().max(200),
   detail: z.record(z.unknown()).optional(),
