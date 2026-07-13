@@ -1,31 +1,40 @@
 {
-  "version": 4,
+  "version": 5,
   "updatedAt": "2026-07-13",
-  "comment": "TESTE DE QUEBRA TOTAL: TODOS os 6 grupos sabotados com seletores falsos — simula a Meta renomeando todos os data-testid de uma vez. A extensao v2.8.2 deve ficar cega (nao detectar nome nem telefone via DOM). Sera consertado no proximo commit — NAO deixar assim.",
+  "comment": "Config remota da extensao WZ Conecta. Fonte da verdade dos seletores DOM do WhatsApp Web. Para corrigir uma quebra: edite este arquivo, incremente version, commit + merge na main (o pipeline deploya sozinho). A extensao pega a mudanca na proxima recarga do WhatsApp Web (cache de 6h). Ver PLAYBOOK-SELETORES.md.",
   "selectorGroups": {
     "header": [
-      "[data-testid=\"meta-mudou-header-simulacao\"]",
-      "#wz-header-quebrado"
+      "[data-testid=\"conversation-header\"]",
+      "[data-testid=\"chat-header\"]",
+      "header._amid",
+      "header[data-testid]",
+      "#main header"
     ],
     "contactTitle": [
-      "[data-testid=\"meta-mudou-titulo-simulacao\"] span[title]",
-      "#wz-titulo-quebrado span[title]"
+      "[data-testid=\"conversation-info-header\"] span[title]",
+      "[data-testid=\"chat-title\"] span[title]",
+      "#main header span[title]",
+      "#main header span[dir=\"auto\"]"
     ],
     "contactSub": [
-      "[data-testid=\"meta-mudou-sub-simulacao\"] div[title]",
-      "#wz-sub-quebrado div[title]"
+      "[data-testid=\"conversation-info-header\"] div[title]",
+      "#main header span[title] ~ span",
+      "#main header div[title]"
     ],
     "drawerContainer": [
-      "[data-testid=\"meta-mudou-drawer-simulacao\"]",
-      "#wz-drawer-quebrado"
+      "[data-testid=\"drawer-right\"]",
+      "[data-testid~=\"chat-info-drawer\"]",
+      "[data-testid~=\"contact-info-header\"]",
+      "[data-testid~=\"contact-info-drawer\"]",
+      "section[data-testid~=\"contact-info\"]"
     ],
     "drawerContactName": [
-      "[data-testid=\"meta-mudou-drawername-simulacao\"]",
-      "#wz-drawername-quebrado"
+      "[data-testid~=\"contact-info-subtitle\"]",
+      "[data-testid~=\"contact-info-name\"]",
+      "[data-testid~=\"conversation-info-header-chat-title\"]"
     ],
     "drawerContactPhone": [
-      "[data-testid=\"meta-mudou-drawerphone-simulacao\"]",
-      "#wz-drawerphone-quebrado"
+      "[data-testid~=\"selectable-text\"]"
     ]
   },
   "flags": {
