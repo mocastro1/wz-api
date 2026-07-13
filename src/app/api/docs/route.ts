@@ -224,6 +224,22 @@ const spec = {
         },
       },
     },
+    '/api/extension/config': {
+      get: {
+        tags: ['Sistema'],
+        summary: 'Config remota da extensão',
+        description: 'Serve os seletores DOM do WhatsApp Web e flags de comportamento a partir de config/extension-config.json. Editar o JSON (commit + merge na main) corrige a extensão sem release na Chrome Web Store — ver PLAYBOOK-SELETORES.md. Não requer autenticação (conteúdo não sensível); protegido por rate limit e CORS.',
+        security: [],
+        responses: {
+          200: {
+            description: 'Config atual',
+            content: { 'application/json': { schema: { type: 'object', properties: { ok: { type: 'boolean' }, config: { type: 'object', properties: { version: { type: 'integer' }, updatedAt: { type: 'string' }, selectorGroups: { type: 'object' }, flags: { type: 'object' } } } } } } },
+          },
+          500: { description: 'Config malformada/inválida (extensão usa fallback embutido)', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+          503: { description: 'Arquivo de config indisponível (extensão usa fallback embutido)', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+        },
+      },
+    },
     '/api/leads': {
       post: {
         tags: ['Leads'],
