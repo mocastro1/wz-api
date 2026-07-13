@@ -1,7 +1,7 @@
 {
-  "version": 1,
-  "updatedAt": "2026-07-09",
-  "comment": "Config remota da extensão WZ Conecta. Edite este arquivo no servidor e a mudança chega aos vendedores na próxima recarga do WhatsApp Web (cache de 6h na extensão). NÃO precisa rebuild nem redeploy — o arquivo é montado como volume. Formato validado pela rota GET /api/extension/config; se ficar inválido, a extensão usa o fallback embutido.",
+  "version": 2,
+  "updatedAt": "2026-07-13",
+  "comment": "TESTE DE PROPAGACAO: version bumpado 1->2 so para confirmar que a extensao le a config do servidor. Selectors identicos ao v1 — zero efeito de comportamento. Sera revertido para 1 apos o teste.",
   "selectorGroups": {
     "header": [
       "[data-testid=\"conversation-header\"]",
