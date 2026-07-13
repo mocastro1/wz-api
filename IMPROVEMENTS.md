@@ -183,7 +183,7 @@ content.js (index, inicia)
 ## 📋 Checklist Geral
 
 ### API (wz-api)
-- [ ] Config remota de seletores (`GET /api/extension/config`)
+- [x] Config remota de seletores (`GET /api/extension/config`) — ✅ jul/2026, validada em produção com teste de quebra/conserto (ver PLAYBOOK-SELETORES.md)
 - [ ] Telemetry aggregation + alertas (`POST /api/extension/telemetry/strategy`)
 - [ ] Testes Camada 1 (funções puras)
 - [ ] Testes Camada 2 (rotas API)
