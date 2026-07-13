@@ -1,7 +1,7 @@
 {
-  "version": 2,
+  "version": 3,
   "updatedAt": "2026-07-13",
-  "comment": "TESTE DE PROPAGACAO: version bumpado 1->2 so para confirmar que a extensao le a config do servidor. Selectors identicos ao v1 — zero efeito de comportamento. Sera revertido para 1 apos o teste.",
+  "comment": "TESTE DE QUEBRA SIMULADA: contactTitle sabotado de proposito (seletores falsos) para simular a Meta mudando os data-testid. A extensao v2.8.2 deve FALHAR em detectar o nome do contato. Sera consertado no proximo commit — NAO deixar assim.",
   "selectorGroups": {
     "header": [
       "[data-testid=\"conversation-header\"]",
@@ -11,10 +11,9 @@
       "#main header"
     ],
     "contactTitle": [
-      "[data-testid=\"conversation-info-header\"] span[title]",
-      "[data-testid=\"chat-title\"] span[title]",
-      "#main header span[title]",
-      "#main header span[dir=\"auto\"]"
+      "[data-testid=\"meta-mudou-tudo-simulacao\"] span[title]",
+      "[data-testid=\"seletor-que-nao-existe\"] span[title]",
+      "#wz-teste-quebrado span[title]"
     ],
     "contactSub": [
       "[data-testid=\"conversation-info-header\"] div[title]",
