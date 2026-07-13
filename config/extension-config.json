@@ -1,39 +1,31 @@
 {
-  "version": 3,
+  "version": 4,
   "updatedAt": "2026-07-13",
-  "comment": "TESTE DE QUEBRA SIMULADA: contactTitle sabotado de proposito (seletores falsos) para simular a Meta mudando os data-testid. A extensao v2.8.2 deve FALHAR em detectar o nome do contato. Sera consertado no proximo commit — NAO deixar assim.",
+  "comment": "TESTE DE QUEBRA TOTAL: TODOS os 6 grupos sabotados com seletores falsos — simula a Meta renomeando todos os data-testid de uma vez. A extensao v2.8.2 deve ficar cega (nao detectar nome nem telefone via DOM). Sera consertado no proximo commit — NAO deixar assim.",
   "selectorGroups": {
     "header": [
-      "[data-testid=\"conversation-header\"]",
-      "[data-testid=\"chat-header\"]",
-      "header._amid",
-      "header[data-testid]",
-      "#main header"
+      "[data-testid=\"meta-mudou-header-simulacao\"]",
+      "#wz-header-quebrado"
     ],
     "contactTitle": [
-      "[data-testid=\"meta-mudou-tudo-simulacao\"] span[title]",
-      "[data-testid=\"seletor-que-nao-existe\"] span[title]",
-      "#wz-teste-quebrado span[title]"
+      "[data-testid=\"meta-mudou-titulo-simulacao\"] span[title]",
+      "#wz-titulo-quebrado span[title]"
     ],
     "contactSub": [
-      "[data-testid=\"conversation-info-header\"] div[title]",
-      "#main header span[title] ~ span",
-      "#main header div[title]"
+      "[data-testid=\"meta-mudou-sub-simulacao\"] div[title]",
+      "#wz-sub-quebrado div[title]"
     ],
     "drawerContainer": [
-      "[data-testid=\"drawer-right\"]",
-      "[data-testid~=\"chat-info-drawer\"]",
-      "[data-testid~=\"contact-info-header\"]",
-      "[data-testid~=\"contact-info-drawer\"]",
-      "section[data-testid~=\"contact-info\"]"
+      "[data-testid=\"meta-mudou-drawer-simulacao\"]",
+      "#wz-drawer-quebrado"
     ],
     "drawerContactName": [
-      "[data-testid~=\"contact-info-subtitle\"]",
-      "[data-testid~=\"contact-info-name\"]",
-      "[data-testid~=\"conversation-info-header-chat-title\"]"
+      "[data-testid=\"meta-mudou-drawername-simulacao\"]",
+      "#wz-drawername-quebrado"
     ],
     "drawerContactPhone": [
-      "[data-testid~=\"selectable-text\"]"
+      "[data-testid=\"meta-mudou-drawerphone-simulacao\"]",
+      "#wz-drawerphone-quebrado"
     ]
   },
   "flags": {
