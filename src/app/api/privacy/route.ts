@@ -1,6 +1,8 @@
 // Política de Privacidade da extensão WZ Conecta.
-// Servida como HTML público em https://wzapi.viacometa.com.br/privacy
+// Servida como HTML público em https://wzapi.viacometa.com.br/api/privacy
 // (usada no campo "URL da Política de Privacidade" da Chrome Web Store).
+// Fica sob /api/ porque o reverse proxy (nginx) só encaminha esse prefixo ao app.
+// Rota pública: não chama o guard de autenticação.
 
 const HTML = `<!doctype html>
 <html lang="pt-br">
